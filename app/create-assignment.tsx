@@ -17,7 +17,6 @@ import DateTimePicker from '../components/DateTimePicker';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 import { supabase } from '../lib/supabase';
-import { supabase } from '../lib/supabase';
 
 export default function CreateAssignment() {
   const router = useRouter();
