@@ -4,24 +4,6 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": null,
-  "env": {
-    "EXPO_PUBLIC_SUPABASE_URL": "@expo_public_supabase_url",
-    "EXPO_PUBLIC_SUPABASE_ANON_KEY": "@expo_public_supabase_anon_key",
-    "EXPO_PUBLIC_EMAILJS_SERVICE_ID": "@expo_public_emailjs_service_id",
-    "EXPO_PUBLIC_EMAILJS_USER_ID": "@expo_public_emailjs_user_id",
-    "EXPO_PUBLIC_EMAILJS_TEACHER_TEMPLATE": "@expo_public_emailjs_teacher_template",
-    "EXPO_PUBLIC_EMAILJS_STUDENT_TEMPLATE": "@expo_public_emailjs_student_template"
-  },
-  "build": {
-    "env": {
-      "EXPO_PUBLIC_SUPABASE_URL": "@expo_public_supabase_url",
-      "EXPO_PUBLIC_SUPABASE_ANON_KEY": "@expo_public_supabase_anon_key",
-      "EXPO_PUBLIC_EMAILJS_SERVICE_ID": "@expo_public_emailjs_service_id",
-      "EXPO_PUBLIC_EMAILJS_USER_ID": "@expo_public_emailjs_user_id",
-      "EXPO_PUBLIC_EMAILJS_TEACHER_TEMPLATE": "@expo_public_emailjs_teacher_template",
-      "EXPO_PUBLIC_EMAILJS_STUDENT_TEMPLATE": "@expo_public_emailjs_student_template"
-    }
-  },
   "functions": {
     "app/**": {
       "maxDuration": 30
