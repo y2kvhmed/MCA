@@ -41,7 +41,15 @@
     "web": {
       "favicon": "./assets/icon.png",
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "build": {
+        "babel": {
+          "include": [
+            "node_modules/react-native-vector-icons",
+            "node_modules/@expo/vector-icons"
+          ]
+        }
+      }
     },
     "plugins": [
       "expo-router"
