@@ -45,7 +45,7 @@ export async function signIn(email: string, password: string) {
           await supabase.auth.signOut();
           return { user: null, error: 'Your account has been deactivated. Please contact an administrator.' };
         }
-        
+
         await AsyncStorage.setItem('current_user', JSON.stringify(userData));
         return { user: userData as User, error: null };
       }
@@ -78,7 +78,7 @@ export async function signIn(email: string, password: string) {
 
     // Store user session
     await AsyncStorage.setItem('current_user', JSON.stringify(userData));
-    
+
     return { user: userData as User, error: null };
   } catch (error) {
     console.error('Sign in error:', error);
@@ -98,7 +98,7 @@ export async function getCurrentUser(): Promise<User | null> {
     const currentUser = await AsyncStorage.getItem('current_user');
     if (currentUser) {
       const user = JSON.parse(currentUser) as User;
-      
+
       // Verify the user is still active in the database
       const { data: userData, error } = await supabase
         .from('app_users')
@@ -106,13 +106,13 @@ export async function getCurrentUser(): Promise<User | null> {
         .eq('id', user.id)
         .eq('is_active', true)
         .single();
-      
+
       if (error || !userData) {
         // User no longer exists or is inactive, clear session
         await AsyncStorage.removeItem('current_user');
         return null;
       }
-      
+
       return userData as User;
     }
 
@@ -126,7 +126,7 @@ export async function getCurrentUser(): Promise<User | null> {
         .eq('id', authUser.id)
         .eq('is_active', true)
         .single();
-      
+
       if (userData) {
         // Store in local session for faster access
         await AsyncStorage.setItem('current_user', JSON.stringify(userData));
@@ -147,14 +147,14 @@ export async function signOut() {
     // Clear all local storage
     await AsyncStorage.removeItem(TEST_ADMIN_KEY);
     await AsyncStorage.removeItem('current_user');
-    
+
     // Clear all AsyncStorage keys (for web compatibility)
     try {
       await AsyncStorage.clear();
     } catch (clearError) {
       console.log('AsyncStorage clear error (non-critical):', clearError);
     }
-    
+
     console.log('Signing out from Supabase...');
     // Sign out from Supabase (if there's a session)
     try {
@@ -162,7 +162,7 @@ export async function signOut() {
     } catch (error) {
       console.log('Supabase sign out error (non-critical):', error);
     }
-    
+
     console.log('Sign out completed');
     return { error: null };
   } catch (error) {
@@ -184,7 +184,7 @@ export async function updateUserProfile(userId: string, updates: Partial<User>) 
 
     // Update local session
     await AsyncStorage.setItem('current_user', JSON.stringify(data));
-    
+
     return { data, error: null };
   } catch (error) {
     console.error('Update profile error:', error);

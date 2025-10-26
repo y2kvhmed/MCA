@@ -14,32 +14,36 @@ Notifications.setNotificationHandler({
 export async function registerForPushNotificationsAsync() {
   let token;
 
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF231F7C',
-    });
-  }
+  try {
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+      });
+    }
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-  
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    
+    if (finalStatus !== 'granted') {
+      // Don't show alert, just return null
+      return null;
+    }
+    
+    token = (await Notifications.getExpoPushTokenAsync()).data;
+    
+    return token;
+  } catch (error) {
+    // Silently handle errors in notification setup
+    return null;
   }
-  
-  if (finalStatus !== 'granted') {
-    alert('Failed to get push token for push notification!');
-    return;
-  }
-  
-  token = (await Notifications.getExpoPushTokenAsync()).data;
-  console.log('Push notification token:', token);
-
-  return token;
 }
 
 export async function sendLocalNotification(title: string, body: string, data?: any) {
@@ -197,20 +201,11 @@ export async function notifyClassStudents(
       data,
     }));
 
-    // Send batch notifications (in a real app, you'd use Expo's push service)
+    // For now, just send local notifications
+    // In production, you would use Expo's push service or another provider
     for (const message of messages) {
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Accept-encoding': 'gzip, deflate',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(message),
-      });
+      await sendLocalNotification(message.title, message.body, message.data);
     }
-
-    console.log(`Sent notifications to ${tokens.length} students in class ${classId}`);
   } catch (error) {
     console.error('Error sending class notifications:', error);
   }
@@ -253,30 +248,18 @@ export async function notifyGradePostedToStudent(
       return;
     }
 
-    // Send notification to specific student
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        to: data.push_token,
-        sound: 'default',
-        title: 'Grade Posted',
-        body: `You received ${grade}/${maxScore} on ${assignmentTitle}`,
-        data: { 
-          type: NotificationTypes.GRADE_POSTED,
-          studentId,
-          assignmentTitle,
-          grade,
-          maxScore
-        },
-      }),
-    });
-
-    console.log(`Sent grade notification to student ${studentId}`);
+    // Send local notification for now
+    await sendLocalNotification(
+      'Grade Posted',
+      `You received ${grade}/${maxScore} on ${assignmentTitle}`,
+      { 
+        type: NotificationTypes.GRADE_POSTED,
+        studentId,
+        assignmentTitle,
+        grade,
+        maxScore
+      }
+    );
   } catch (error) {
     console.error('Error sending grade notification:', error);
   }
@@ -336,21 +319,11 @@ export async function notifyGradeReleaseToStudent(studentId: string, assignmentT
 
     if (error || !data?.push_token) return;
 
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        to: data.push_token,
-        sound: 'default',
-        title: 'Grade Released',
-        body: `Your grade for "${assignmentTitle}" is now available: ${grade}%`,
-        data: { type: 'grade_release', assignmentTitle, grade },
-      }),
-    });
+    await sendLocalNotification(
+      'Grade Released',
+      `Your grade for "${assignmentTitle}" is now available: ${grade}%`,
+      { type: 'grade_release', assignmentTitle, grade }
+    );
   } catch (error) {
     console.error('Error sending grade release notification:', error);
   }

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,6 +15,7 @@
             padding: 20px;
             background-color: #f8f9fa;
         }
+
         .email-container {
             background: #FFFFFF;
             border-radius: 12px;
@@ -21,6 +23,7 @@
             overflow: hidden;
             border: 2px solid #001F3F;
         }
+
         .header {
             background: #001F3F;
             color: #FFFFFF;
@@ -28,6 +31,7 @@
             text-align: center;
             position: relative;
         }
+
         .header::after {
             content: '';
             position: absolute;
@@ -37,18 +41,21 @@
             height: 4px;
             background: #ffe164;
         }
+
         .header h1 {
             margin: 0;
             font-size: 28px;
             font-weight: 600;
             color: #FFFFFF;
         }
+
         .header .subtitle {
             margin: 5px 0 0 0;
             font-size: 16px;
             color: #ffe164;
             font-weight: 400;
         }
+
         .role-badge {
             background: #ffe164;
             color: #001F3F;
@@ -59,20 +66,24 @@
             margin-top: 15px;
             display: inline-block;
         }
+
         .content {
             padding: 30px 20px;
         }
+
         .greeting {
             font-size: 18px;
             color: #001F3F;
             margin-bottom: 15px;
             font-weight: 600;
         }
+
         .description {
             color: #666666;
             margin-bottom: 25px;
             font-size: 16px;
         }
+
         .credentials-box {
             background: #f8f9ff;
             border: 2px solid #001F3F;
@@ -81,6 +92,7 @@
             margin: 20px 0;
             position: relative;
         }
+
         .credentials-box::before {
             content: '';
             position: absolute;
@@ -91,11 +103,13 @@
             background: #ffe164;
             border-radius: 6px 6px 0 0;
         }
+
         .credentials-box h3 {
             margin-top: 0;
             color: #001F3F;
             font-weight: 600;
         }
+
         .credential-item {
             margin: 10px 0;
             font-family: monospace;
@@ -105,25 +119,30 @@
             border: 1px solid #e0e0e0;
             border-left: 4px solid #ffe164;
         }
+
         .section {
             margin: 25px 0;
         }
+
         .section h3 {
             color: #001F3F;
             border-bottom: 2px solid #ffe164;
             padding-bottom: 8px;
             font-weight: 600;
         }
+
         .features-list {
             list-style: none;
             padding: 0;
         }
+
         .features-list li {
             padding: 10px 0;
             border-bottom: 1px solid #e0e0e0;
             position: relative;
             padding-left: 25px;
         }
+
         .features-list li:before {
             content: "✓";
             color: #ffe164;
@@ -140,9 +159,11 @@
             justify-content: center;
             font-size: 12px;
         }
+
         .steps-list {
             padding-left: 0;
         }
+
         .steps-list li {
             margin: 12px 0;
             padding: 12px;
@@ -150,6 +171,7 @@
             border-left: 4px solid #001F3F;
             border-radius: 0 6px 6px 0;
         }
+
         .footer {
             background: #001F3F;
             color: #FFFFFF;
@@ -157,23 +179,28 @@
             text-align: center;
             font-size: 14px;
         }
+
         .footer .highlight {
             color: #ffe164;
             font-weight: 600;
         }
+
         @media (max-width: 600px) {
             body {
                 padding: 10px;
             }
+
             .header {
                 padding: 20px 15px;
             }
+
             .content {
                 padding: 20px 15px;
             }
         }
     </style>
 </head>
+
 <body>
     <div class="email-container">
         <div class="header">
@@ -181,12 +208,13 @@
             <p class="subtitle">with Mr. Saddam</p>
             <div class="role-badge">Student Account</div>
         </div>
-        
+
         <div class="content">
             <h2>Hello {{to_name}}!</h2>
             <p class="greeting">Welcome to your physics learning journey with Mr. Saddam!</p>
-            <p class="description">As a student, you have access to a comprehensive learning platform designed to help you excel in physics under Mr. Saddam's guidance.</p>
-            
+            <p class="description">As a student, you have access to a comprehensive learning platform designed to help
+                you excel in physics under Mr. Saddam's guidance.</p>
+
             <div class="credentials-box">
                 <h3>Your Login Credentials</h3>
                 <div class="credential-item">
@@ -199,7 +227,7 @@
                     <strong>School:</strong> {{school_name}}
                 </div>
             </div>
-            
+
             <div class="section">
                 <h3>Your Student Features</h3>
                 <ul class="features-list">
@@ -210,7 +238,7 @@
                     <li>Participate in interactive learning activities</li>
                 </ul>
             </div>
-            
+
             <div class="section">
                 <h3>Getting Started</h3>
                 <ol class="steps-list">
@@ -222,7 +250,7 @@
                 </ol>
             </div>
         </div>
-        
+
         <div class="footer">
             <p><strong class="highlight">Welcome to Physics, with Mr. Saddam!</strong></p>
             <p>This email was sent automatically when your student account was created.</p>
@@ -230,4 +258,5 @@
         </div>
     </div>
 </body>
+
 </html>

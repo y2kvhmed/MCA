@@ -6,7 +6,9 @@ import {
   StyleSheet,
   ViewStyle,
   TextStyle,
+  View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/Colors';
 import { BorderRadius, Spacing } from '../constants/Styles';
 
@@ -18,6 +20,7 @@ interface ButtonProps {
   variant?: 'primary' | 'secondary' | 'outline' | 'danger';
   size?: 'small' | 'medium' | 'large';
   style?: ViewStyle;
+  icon?: keyof typeof Ionicons.glyphMap;
 }
 
 export default function Button({
@@ -28,6 +31,7 @@ export default function Button({
   variant = 'primary',
   size = 'medium',
   style,
+  icon,
 }: ButtonProps) {
   const buttonStyle = [
     styles.button,
@@ -53,14 +57,24 @@ export default function Button({
       {loading ? (
         <ActivityIndicator color={variant === 'outline' ? Colors.primary : Colors.text.inverse} />
       ) : (
-        <Text 
-          style={textStyle} 
-          numberOfLines={1}
-          adjustsFontSizeToFit={true}
-          minimumFontScale={0.8}
-        >
-          {title}
-        </Text>
+        <View style={styles.content}>
+          {icon && (
+            <Ionicons 
+              name={icon} 
+              size={size === 'small' ? 16 : size === 'large' ? 20 : 18} 
+              color={variant === 'outline' ? Colors.primary : Colors.text.inverse}
+              style={styles.icon}
+            />
+          )}
+          <Text 
+            style={textStyle} 
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+            minimumFontScale={0.8}
+          >
+            {title}
+          </Text>
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -110,6 +124,16 @@ const styles = StyleSheet.create({
   
   buttonDisabled: {
     opacity: 0.5,
+  },
+  
+  content: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  icon: {
+    marginRight: Spacing.sm,
   },
   
   text: {

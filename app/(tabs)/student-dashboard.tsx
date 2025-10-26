@@ -300,9 +300,9 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   actionButton: {
-    width: '30%',
+    width: '47%',
     alignItems: 'center',
-    padding: Spacing.md,
+    padding: Spacing.lg,
     backgroundColor: Colors.background,
     borderRadius: 12,
   },

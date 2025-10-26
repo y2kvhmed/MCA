@@ -71,7 +71,11 @@ export default function MaterialsList() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity 
+          onPress={() => router.back()}
+          style={styles.backButton}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Materials ({materials.length})</Text>
@@ -125,7 +129,29 @@ export default function MaterialsList() {
                     )}
                   </View>
                 </View>
-                <View style={styles.materialStatus}>
+                <View style={styles.materialActions}>
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      router.push(`/material-details?materialId=${material.id}`);
+                    }}
+                  >
+                    <Ionicons name="eye" size={16} color={Colors.primary} />
+                  </TouchableOpacity>
+                  
+                  {(user?.role === 'teacher' || user?.role === 'admin' || user?.id === material.uploaded_by) && (
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        router.push(`/delete-material?materialId=${material.id}`);
+                      }}
+                    >
+                      <Ionicons name="trash" size={16} color={Colors.error} />
+                    </TouchableOpacity>
+                  )}
+                  
                   <View style={[
                     styles.statusBadge,
                     { backgroundColor: material.is_published ? Colors.success : Colors.warning }
@@ -134,7 +160,6 @@ export default function MaterialsList() {
                       {material.is_published ? 'Published' : 'Draft'}
                     </Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
                 </View>
               </TouchableOpacity>
             </Card>
@@ -145,7 +170,7 @@ export default function MaterialsList() {
       {/* Floating Action Button */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => router.push('/create-assignment')}
+        onPress={() => router.push('/create-material')}
       >
         <Ionicons name="add" size={24} color={Colors.text.inverse} />
       </TouchableOpacity>
@@ -164,6 +189,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.lg,
     backgroundColor: Colors.card.background,
+  },
+  backButton: {
+    padding: Spacing.sm,
+    marginLeft: -Spacing.sm,
   },
   headerTitle: {
     fontSize: 20,

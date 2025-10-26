@@ -97,7 +97,7 @@ export default function Recordings() {
 
 
   const handleEditRecording = (recordingId: string) => {
-    console.log('Navigating to edit recording:', recordingId);
+
     router.push(`/edit-recording?recordingId=${recordingId}`);
   };
 
@@ -113,21 +113,21 @@ export default function Recordings() {
 
   const handleDeleteConfirm = async () => {
     if (!deleteDialog.recording || !user) {
-      console.error('Missing recording or user data');
+
       return;
     }
 
     setDeleting(true);
     try {
-      console.log('Attempting to delete recording:', deleteDialog.recording.id);
+
       const { error } = await deleteLesson(deleteDialog.recording.id);
       
       if (error) {
-        console.error('Delete recording error:', error);
+
         throw error;
       }
 
-      console.log('Recording deleted successfully');
+
       showSuccess(`Recording "${deleteDialog.recording.title}" deleted successfully`);
       setDeleteDialog({ visible: false, recording: null, dependencies: [] });
       loadData();

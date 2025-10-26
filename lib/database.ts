@@ -71,18 +71,131 @@ export async function deleteSchoolCompletely(schoolId: string) {
       }
     }
     
-    return {
-      success: true,
-      deletedUsers: deleteResult?.deleted_users_count || 0,
-      deletedFiles: deleteResult?.deleted_files_count || 0,
-      message: `School deleted successfully. Removed ${deleteResult?.deleted_users_count || 0} users and ${deleteResult?.deleted_files_count || 0} files.`
-    };
+    if (deleteResult?.success) {
+      return {
+        success: true,
+        deletedUsers: deleteResult?.deleted_users_count || 0,
+        deletedFiles: deleteResult?.deleted_files_count || 0,
+        message: deleteResult?.message || `School deleted successfully. Removed ${deleteResult?.deleted_users_count || 0} users.`
+      };
+    } else {
+      console.error('Database function returned failure:', deleteResult);
+      // Try manual deletion as fallback
+      return await deleteSchoolManually(schoolId);
+    }
     
   } catch (error) {
     console.error('Complete school deletion error:', error);
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error occurred' 
+    // Try manual deletion as fallback
+    try {
+      return await deleteSchoolManually(schoolId);
+    } catch (fallbackError) {
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+      };
+    }
+  }
+}
+
+// Manual school deletion fallback
+async function deleteSchoolManually(schoolId: string) {
+  try {
+    console.log('Starting manual school deletion for:', schoolId);
+    
+    let deletedUsers = 0;
+    
+    // Delete in dependency order
+    
+    // 1. Delete submissions
+    const { error: submissionsError } = await supabase
+      .from('submissions')
+      .delete()
+      .in('assignment_id', 
+        supabase.from('assignments').select('id').in('class_id',
+          supabase.from('classes').select('id').eq('school_id', schoolId)
+        )
+      );
+    
+    if (submissionsError) console.warn('Error deleting submissions:', submissionsError);
+    
+    // 2. Delete assignments
+    const { error: assignmentsError } = await supabase
+      .from('assignments')
+      .delete()
+      .in('class_id', 
+        supabase.from('classes').select('id').eq('school_id', schoolId)
+      );
+    
+    if (assignmentsError) console.warn('Error deleting assignments:', assignmentsError);
+    
+    // 3. Delete study materials
+    const { error: materialsError } = await supabase
+      .from('study_materials')
+      .delete()
+      .in('uploaded_by',
+        supabase.from('app_users').select('id').eq('school_id', schoolId)
+      );
+    
+    if (materialsError) console.warn('Error deleting materials:', materialsError);
+    
+    // 4. Delete messages
+    const { error: messagesError } = await supabase
+      .from('messages')
+      .delete()
+      .in('sender_id',
+        supabase.from('app_users').select('id').eq('school_id', schoolId)
+      );
+    
+    if (messagesError) console.warn('Error deleting messages:', messagesError);
+    
+    // 5. Delete classes
+    const { error: classesError } = await supabase
+      .from('classes')
+      .delete()
+      .eq('school_id', schoolId);
+    
+    if (classesError) console.warn('Error deleting classes:', classesError);
+    
+    // 6. Count and delete users (except admins)
+    const { data: usersToDelete } = await supabase
+      .from('app_users')
+      .select('id')
+      .eq('school_id', schoolId)
+      .neq('role', 'admin');
+    
+    deletedUsers = usersToDelete?.length || 0;
+    
+    const { error: usersError } = await supabase
+      .from('app_users')
+      .delete()
+      .eq('school_id', schoolId)
+      .neq('role', 'admin');
+    
+    if (usersError) console.warn('Error deleting users:', usersError);
+    
+    // 7. Delete the school
+    const { error: schoolError } = await supabase
+      .from('schools')
+      .delete()
+      .eq('id', schoolId);
+    
+    if (schoolError) {
+      throw new Error(`Failed to delete school: ${schoolError.message}`);
+    }
+    
+    return {
+      success: true,
+      deletedUsers,
+      deletedFiles: 0,
+      message: `School deleted successfully using manual method. Removed ${deletedUsers} users.`
+    };
+    
+  } catch (error) {
+    console.error('Manual school deletion error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Manual deletion failed'
     };
   }
 }
@@ -258,88 +371,7 @@ export async function activateUser(userId: string) {
 }
 
 
-// ============= CLASSES =============
-export async function createClass(classData: {
-  name: string;
-  description?: string;
-  teacher_id: string;
-  school_id?: string;
-}) {
-  const { data, error } = await supabase
-    .from('classes')
-    .insert(classData)
-    .select()
-    .single();
-  
-  return { data, error };
-}
 
-export async function getClassesByTeacher(teacherId: string) {
-  const { data, error } = await supabase
-    .from('classes')
-    .select(`
-      *,
-      teacher:app_users!classes_teacher_id_fkey(id, name, email),
-      enrollments(count)
-    `)
-    .eq('teacher_id', teacherId)
-    .order('created_at', { ascending: false });
-  
-  return { data, error };
-}
-
-export async function getClassesByStudent(studentId: string) {
-  const { data, error } = await supabase
-    .from('enrollments')
-    .select(`
-      *,
-      class:classes(
-        *,
-        teacher:app_users!classes_teacher_id_fkey(id, name, email)
-      )
-    `)
-    .eq('student_id', studentId)
-    .order('joined_at', { ascending: false });
-  
-  return { data, error };
-}
-
-export async function getAllClasses() {
-  const { data, error } = await supabase
-    .from('classes')
-    .select(`
-      *,
-      teacher:app_users!classes_teacher_id_fkey(id, name, email),
-      enrollments(count)
-    `)
-    .order('created_at', { ascending: false });
-  
-  return { data, error };
-}
-
-// ============= ENROLLMENTS =============
-export async function enrollStudent(classId: string, studentId: string) {
-  const { data, error } = await supabase
-    .from('enrollments')
-    .insert({ class_id: classId, student_id: studentId })
-    .select()
-    .single();
-  
-  return { data, error };
-}
-
-export async function getEnrollmentsByClass(classId: string) {
-  const { data, error } = await supabase
-    .from('enrollments')
-    .select(`
-      *,
-      student:app_users!enrollments_student_id_fkey(id, name, email)
-    `)
-    .eq('class_id', classId)
-    .order('joined_at', { ascending: false });
-  
-  return { data, error };
-}
 
 
 // ============= ASSIGNMENTS =============

@@ -66,7 +66,7 @@ export default function AdminProfile() {
   };
 
   const handleLogout = async () => {
-    console.log('Logout clicked');
+
     try {
       // Clear all storage and sign out
       await AsyncStorage.clear();

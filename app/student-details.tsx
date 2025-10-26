@@ -121,8 +121,9 @@ export default function StudentDetails() {
   const submittedCount = submissions.length;
   const totalAssignments = assignments.length;
   const missingCount = totalAssignments - submittedCount;
-  const averageGrade = submissions.filter(s => s.grade !== null).length > 0
-    ? submissions.filter(s => s.grade !== null).reduce((sum, s) => sum + s.grade, 0) / submissions.filter(s => s.grade !== null).length
+  const gradedSubmissions = submissions.filter(s => s && s.grade !== null && s.grade !== undefined);
+  const averageGrade = gradedSubmissions.length > 0
+    ? gradedSubmissions.reduce((sum, s) => sum + (Number(s.grade) || 0), 0) / gradedSubmissions.length
     : 0;
 
   return (
@@ -234,9 +235,9 @@ export default function StudentDetails() {
                         {status.charAt(0).toUpperCase() + status.slice(1)}
                       </Text>
                     </View>
-                    {submission?.grade !== null && (
+                    {submission && submission.grade !== null && submission.grade !== undefined && (
                       <Text style={styles.gradeText}>
-                        {submission.grade}/{assignment.max_score}
+                        {submission.grade}/{assignment.max_score || 100}
                       </Text>
                     )}
                   </View>

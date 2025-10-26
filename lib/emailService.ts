@@ -132,27 +132,72 @@ function createEmailTemplate(title: string, content: string, actionUrl?: string,
   };
 }
 
-// Send email using Supabase Edge Functions (you'll need to create this)
+// Send email using EmailJS
 export async function sendEmail(to: string[], template: EmailTemplate) {
   try {
-    const { data, error } = await supabase.functions.invoke('send-email', {
-      body: {
-        to,
-        subject: template.subject,
-        html: template.html,
-        text: template.text,
-      },
-    });
+    console.log('Sending email to:', to);
+    console.log('Subject:', template.subject);
 
-    if (error) {
-      console.error('Error sending email:', error);
-      return { success: false, error };
+    // EmailJS configuration from environment variables
+    const serviceId = process.env.EXPO_PUBLIC_EMAILJS_SERVICE_ID;
+    const userId = process.env.EXPO_PUBLIC_EMAILJS_USER_ID;
+    const templateId = process.env.EXPO_PUBLIC_EMAILJS_TEACHER_TEMPLATE;
+
+    if (!serviceId || !userId || !templateId) {
+      console.error('EmailJS configuration missing');
+      return { success: false, error: 'Email service not configured' };
     }
 
-    return { success: true, data };
+    // Send email to each recipient
+    const results = [];
+    for (const email of to) {
+      try {
+        const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            service_id: serviceId,
+            template_id: templateId,
+            user_id: userId,
+            template_params: {
+              to_email: email,
+              subject: template.subject,
+              message: template.text,
+              html_content: template.html
+            }
+          })
+        });
+
+        if (response.ok) {
+          console.log(`Email sent successfully to ${email}`);
+          results.push({ email, success: true });
+        } else {
+          console.error(`Failed to send email to ${email}:`, response.statusText);
+          results.push({ email, success: false, error: response.statusText });
+        }
+      } catch (error) {
+        console.error(`Error sending email to ${email}:`, error);
+        results.push({ email, success: false, error: error.message });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const totalCount = results.length;
+
+    return { 
+      success: successCount > 0, 
+      data: { 
+        messageId: Date.now().toString(),
+        results,
+        successCount,
+        totalCount
+      } 
+    };
   } catch (error) {
-    console.error('Error sending email:', error);
-    return { success: false, error };
+    console.error('Email service error:', error);
+    return { success: false, error: error.message };
   }
 }
 

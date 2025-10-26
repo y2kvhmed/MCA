@@ -92,23 +92,80 @@ export default function SubmitAssignment() {
 
     setSubmitting(true);
     try {
-      const result = await submitAssignment(
-        assignment.id,
-        user.id,
-        selectedFile,
-        {
-          comments: existingSubmission ? 'Resubmission' : 'Initial submission',
-          attemptNumber: existingSubmission ? existingSubmission.attempt_number + 1 : 1
-        }
-      );
+      console.log('Starting submission:', { assignmentId: assignment.id, studentId: user.id, fileName: selectedFile.name });
 
-      if (result.success) {
-        showSuccess(existingSubmission ? 'Assignment resubmitted successfully!' : 'Assignment submitted successfully!');
-        router.back();
-      } else {
-        handleError(null, result.error || 'Failed to submit assignment');
+      // Read file as blob for React Native
+      const response = await fetch(selectedFile.uri);
+      if (!response.ok) {
+        throw new Error(`Failed to read file: ${response.statusText}`);
       }
+      
+      const blob = await response.blob();
+      
+      // Create unique filename
+      const fileExt = selectedFile.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
+
+      console.log('Uploading to submissions bucket:', filePath);
+
+      // Upload to submissions bucket
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('submissions')
+        .upload(filePath, blob, {
+          contentType: selectedFile.mimeType || 'application/pdf',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw new Error(`Upload failed: ${uploadError.message}`);
+      }
+
+      console.log('Upload successful:', uploadData);
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('submissions')
+        .getPublicUrl(filePath);
+
+      console.log('Generated public URL:', publicUrl);
+
+      // Create submission record
+      const submissionData = {
+        assignment_id: assignment.id,
+        student_id: user.id,
+        content: 'File submission',
+        file_path: filePath,
+        file_name: selectedFile.name,
+        file_size: selectedFile.size,
+        file_url: publicUrl,
+        submitted_at: new Date().toISOString(),
+        status: 'submitted',
+        points_earned: null,
+        feedback: null
+      };
+
+      console.log('Creating submission record:', submissionData);
+
+      const { data: submissionResult, error: submissionError } = await supabase
+        .from('submissions')
+        .insert(submissionData)
+        .select()
+        .single();
+
+      if (submissionError) {
+        console.error('Submission creation error:', submissionError);
+        // Clean up uploaded file if submission creation fails
+        await supabase.storage.from('submissions').remove([filePath]);
+        throw new Error(`Failed to create submission: ${submissionError.message}`);
+      }
+
+      console.log('Submission created successfully:', submissionResult);
+      showSuccess('Assignment submitted successfully!');
+      router.back();
     } catch (error) {
+      console.error('Submit error:', error);
       handleError(error, 'Failed to submit assignment');
     } finally {
       setSubmitting(false);
@@ -144,7 +201,7 @@ export default function SubmitAssignment() {
       <ScrollView style={styles.content}>
         <Card style={styles.assignmentCard}>
           <Text style={styles.assignmentTitle}>{assignment.title}</Text>
-          <Text style={styles.className}>{assignment.class.name}</Text>
+          <Text style={styles.className}>{assignment.class?.name || 'No class assigned'}</Text>
           
           <View style={styles.detailRow}>
             <Ionicons name="calendar" size={16} color={Colors.text.secondary} />

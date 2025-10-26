@@ -48,18 +48,32 @@ export default function ViewSchools() {
           onPress: async () => {
             setLoading(true);
             try {
+              console.log('Attempting to delete school:', schoolId, schoolName);
+              
               // Import the new delete function
               const { deleteSchoolCompletely } = await import('../lib/database');
               const result = await deleteSchoolCompletely(schoolId);
+
+              console.log('Delete result:', result);
 
               if (result.success) {
                 showSuccess(result.message || `School "${schoolName}" deleted successfully`);
                 loadSchools(); // Reload schools
               } else {
-                throw new Error(result.error || 'Failed to delete school');
+                console.error('School deletion failed:', result.error);
+                Alert.alert(
+                  'Deletion Failed', 
+                  result.error || 'Failed to delete school. Please try again.',
+                  [{ text: 'OK' }]
+                );
               }
             } catch (error) {
-              handleError(error, 'Failed to delete school');
+              console.error('School deletion error:', error);
+              Alert.alert(
+                'Error', 
+                `Failed to delete school: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                [{ text: 'OK' }]
+              );
             } finally {
               setLoading(false);
             }

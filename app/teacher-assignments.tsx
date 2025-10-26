@@ -174,6 +174,17 @@ export default function TeacherAssignments() {
                     <Ionicons name="create" size={16} color={Colors.info} />
                     <Text style={styles.actionText}>Edit</Text>
                   </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      router.push(`/delete-assignment?assignmentId=${assignment.id}`);
+                    }}
+                  >
+                    <Ionicons name="trash" size={16} color={Colors.error} />
+                    <Text style={[styles.actionText, { color: Colors.error }]}>Delete</Text>
+                  </TouchableOpacity>
                 </View>
               </TouchableOpacity>
             </AnimatedCard>

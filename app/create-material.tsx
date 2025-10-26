@@ -5,17 +5,15 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { handleError } from '../lib/utils';
+import { handleError, showSuccess } from '../lib/utils';
 import Input from '../components/Input';
 import Button from '../components/Button';
-import { useToast } from '../contexts/ToastContext';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 import * as DocumentPicker from 'expo-document-picker';
 
 export default function CreateMaterial() {
   const router = useRouter();
-  const { showSuccess, showError } = useToast();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -50,35 +48,36 @@ export default function CreateMaterial() {
 
   const pickFile = async () => {
     try {
+      setUploading(true);
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'image/*', 'video/*', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
         copyToCacheDirectory: true,
       });
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
+      if (!result.canceled && result.assets && result.assets[0]) {
         const file = result.assets[0];
+        
+        // Check file size (max 50MB)
+        if (file.size && file.size > 50 * 1024 * 1024) {
+          Alert.alert('Error', 'File size must be less than 50MB');
+          return;
+        }
+
         await handleFileUpload(file);
       }
     } catch (error) {
       console.error('File picker error:', error);
-      showError('Failed to pick file');
+      Alert.alert('Error', 'Failed to pick file');
+    } finally {
+      setUploading(false);
     }
   };
 
   const handleFileUpload = async (file: any) => {
     if (!file) return;
     
-    console.log('Uploading file:', file.name, 'Size:', file.size, 'Type:', file.mimeType);
-    setUploading(true);
-    
     try {
-      // Check if user is authenticated
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error('User not authenticated');
-      }
-      
-      console.log('User authenticated, proceeding with upload...');
+      console.log('Starting file upload for material:', file);
       
       // Read file as blob for React Native
       const response = await fetch(file.uri);
@@ -87,62 +86,49 @@ export default function CreateMaterial() {
       }
       
       const blob = await response.blob();
-      console.log('File blob created, size:', blob.size);
       
       // Create a unique filename
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `materials/${user.school_id}/${fileName}`;
+      const filePath = `user_${user.id}/${fileName}`;
 
-      console.log('Uploading to path:', filePath);
+      console.log('Uploading to materials bucket:', filePath);
 
-      // First, check if bucket exists
-      const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
-      console.log('Available buckets:', buckets?.map(b => b.name));
-      
-      if (bucketError) {
-        console.error('Bucket list error:', bucketError);
-      }
-
-      // Upload to Supabase storage
+      // Upload to materials bucket
       const { data, error } = await supabase.storage
-        .from('study-materials')
+        .from('materials')
         .upload(filePath, blob, {
           contentType: file.mimeType || 'application/octet-stream',
           upsert: false
         });
 
       if (error) {
-        console.error('Upload error details:', {
-          message: error.message,
-          statusCode: error.statusCode,
-          error: error.error
-        });
+        console.error('Upload error:', error);
         throw new Error(`Upload failed: ${error.message}`);
       }
 
       console.log('Upload successful:', data);
 
       // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('study-materials')
+      const { data: { publicUrl } } = supabase.storage
+        .from('materials')
         .getPublicUrl(filePath);
+
+      console.log('Generated public URL:', publicUrl);
 
       setUploadedFile({
         name: file.name,
         size: file.size,
         type: file.mimeType,
-        url: urlData.publicUrl,
+        url: publicUrl,
         path: filePath,
+        bucket: 'materials'
       });
 
       showSuccess('File uploaded successfully!');
-      console.log('File uploaded:', urlData.publicUrl);
     } catch (error) {
       console.error('File upload error:', error);
-      showError(`Failed to upload file: ${error.message || 'Unknown error'}`);
-    } finally {
-      setUploading(false);
+      Alert.alert('Upload Error', `Failed to upload file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -165,11 +151,15 @@ export default function CreateMaterial() {
         subject: formData.subject,
         grade_level: formData.grade_level || null,
         school_id: user.school_id,
-        teacher_id: user.id,
+        uploaded_by: user.id,
+        file_path: uploadedFile?.path || null,
         file_url: uploadedFile?.url || null,
         file_name: uploadedFile?.name || null,
         file_size: uploadedFile?.size || null,
-        file_type: uploadedFile?.type || null,
+        material_type: uploadedFile?.type?.includes('video') ? 'video' : 
+                      uploadedFile?.type?.includes('image') ? 'image' : 'document',
+        is_published: true,
+        is_downloadable: true,
       };
 
       const { data, error } = await supabase

@@ -241,10 +241,8 @@ export default function StudentChat() {
         quality: 0.8,
       });
 
-      if (!result.canceled) {
-        // For now, just show success message
-        // In a full implementation, you'd upload the image and send it
-        showSuccess('Image attachment feature coming soon!');
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await uploadAndSendFile(result.assets[0], 'image');
       }
     } catch (error) {
       handleError(error, 'Failed to pick image');
@@ -258,13 +256,87 @@ export default function StudentChat() {
         copyToCacheDirectory: true,
       });
 
-      if (!result.canceled) {
-        // For now, just show success message
-        // In a full implementation, you'd upload the document and send it
-        showSuccess('Document attachment feature coming soon!');
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await uploadAndSendFile(result.assets[0], 'document');
       }
     } catch (error) {
       handleError(error, 'Failed to pick document');
+    }
+  };
+
+  const uploadAndSendFile = async (file: any, type: 'image' | 'document') => {
+    if (!selectedSchool || !user) return;
+
+    setSending(true);
+    try {
+      // Check file size (max 10MB)
+      if (file.size && file.size > 10 * 1024 * 1024) {
+        Alert.alert('Error', 'File size must be less than 10MB');
+        return;
+      }
+
+      // Read file as blob
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      
+      // Create unique filename
+      const fileExt = file.name?.split('.').pop() || (type === 'image' ? 'jpg' : 'pdf');
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `chat/${selectedSchool}/${fileName}`;
+
+      // Upload to Supabase storage
+      const { data, error } = await supabase.storage
+        .from('chat-files')
+        .upload(filePath, blob, {
+          contentType: file.mimeType || (type === 'image' ? 'image/jpeg' : 'application/pdf'),
+          upsert: false
+        });
+
+      if (error) throw error;
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('chat-files')
+        .getPublicUrl(filePath);
+
+      // Send message with file attachment
+      const messageData = {
+        content: type === 'image' ? '📷 Image' : `📄 ${file.name || 'Document'}`,
+        sender_id: user.id,
+        school_id: selectedSchool,
+        message_type: type,
+        file_path: filePath,
+        file_url: urlData.publicUrl,
+        file_name: file.name || fileName,
+        file_size: file.size
+      };
+
+      const { data: messageResult, error: messageError } = await supabase
+        .from('messages')
+        .insert(messageData)
+        .select(`
+          *,
+          sender:app_users!messages_sender_id_fkey(id, name, role)
+        `)
+        .single();
+
+      if (messageError) throw messageError;
+
+      // Add to local messages
+      setMessages(prev => [...prev, messageResult]);
+      
+      showSuccess(`${type === 'image' ? 'Image' : 'Document'} sent successfully!`);
+      
+      // Scroll to bottom
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+
+    } catch (error) {
+      console.error('File upload error:', error);
+      handleError(error, `Failed to send ${type}`);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -276,7 +348,7 @@ export default function StudentChat() {
     try {
       // In a real implementation, you'd update the message reactions in the database
       // For now, we'll just show a success message
-      console.log(`Added ${emoji} reaction to message ${messageId}`);
+      // Reaction added successfully
     } catch (error) {
       console.error('Failed to add reaction:', error);
     }

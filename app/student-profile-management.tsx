@@ -32,7 +32,7 @@ export default function StudentProfileManagement() {
     totalClasses: 0,
     totalAssignments: 0,
     averageGrade: 0,
-    attendanceRate: 0,
+
   });
 
   useEffect(() => {
@@ -65,7 +65,7 @@ export default function StudentProfileManagement() {
       });
 
       // Load student statistics
-      const [enrollmentsResult, submissionsResult, attendanceResult] = await Promise.all([
+      const [enrollmentsResult, submissionsResult] = await Promise.all([
         // Get enrolled classes
         supabase
           .from('enrollments')
@@ -80,16 +80,12 @@ export default function StudentProfileManagement() {
           .eq('student_id', currentUser.id)
           .eq('status', 'graded'),
         
-        // Get attendance
-        supabase
-          .from('attendance')
-          .select('id, status')
-          .eq('student_id', currentUser.id)
+
       ]);
 
       const enrollments = enrollmentsResult.data || [];
       const submissions = submissionsResult.data || [];
-      const attendance = attendanceResult.data || [];
+
 
       // Calculate statistics
       const totalClasses = enrollments.length;
@@ -97,14 +93,13 @@ export default function StudentProfileManagement() {
       const averageGrade = submissions.length > 0 
         ? submissions.reduce((sum, s) => sum + s.percentage, 0) / submissions.length 
         : 0;
-      const presentAttendance = attendance.filter(a => a.status === 'present').length;
-      const attendanceRate = attendance.length > 0 ? (presentAttendance / attendance.length) * 100 : 0;
+
 
       setStats({
         totalClasses,
         totalAssignments,
         averageGrade,
-        attendanceRate,
+
       });
 
     } catch (error) {
@@ -221,13 +216,7 @@ export default function StudentProfileManagement() {
               </Text>
               <Text style={styles.statLabel}>Avg Grade</Text>
             </View>
-            <View style={styles.statItem}>
-              <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
-              <Text style={[styles.statValue, { color: Colors.success }]}>
-                {stats.attendanceRate.toFixed(1)}%
-              </Text>
-              <Text style={styles.statLabel}>Attendance</Text>
-            </View>
+
           </View>
         </Card>
 

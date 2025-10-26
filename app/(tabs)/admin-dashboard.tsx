@@ -3,9 +3,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getCurrentUser, signOut } from '../../lib/auth';
-import { getAdminStats } from '../../lib/database';
-import { showConfirmation } from '../../lib/utils';
 import { loadAdminDashboard } from '../../lib/dashboardUtils';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
@@ -60,16 +57,7 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleLogout = () => {
-    showConfirmation(
-      'Logout',
-      'Are you sure you want to logout?',
-      async () => {
-        await signOut();
-        router.replace('/welcome');
-      }
-    );
-  };
+
 
   if (loading) {
     return <LoadingSpinner />;
@@ -94,7 +82,7 @@ export default function AdminDashboard() {
           <Card style={styles.statCard}>
             <Ionicons name="people" size={32} color={Colors.success} />
             <Text style={styles.statValue}>{stats.totalUsers}</Text>
-            <Text style={styles.statLabel}>Total Users</Text>
+            <Text style={styles.statLabel}>All Time Total Users</Text>
           </Card>
 
           <Card style={styles.statCard}>

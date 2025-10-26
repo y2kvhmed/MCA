@@ -1,5 +1,24 @@
 import { supabase } from './supabase';
 
+// Simple CSV Export function for general use
+export async function exportToCSV(data: any[], filename: string) {
+  try {
+    if (!data || data.length === 0) {
+      throw new Error('No data to export');
+    }
+
+    const headers = Object.keys(data[0]);
+    const csvContent = arrayToCSV(data, headers);
+    const fullFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+    
+    downloadCSV(csvContent, fullFilename);
+    return { success: true };
+  } catch (error) {
+    console.error('Error exporting CSV:', error);
+    return { success: false, error };
+  }
+}
+
 // CSV Export utilities
 export function arrayToCSV(data: any[], headers: string[]): string {
   const csvHeaders = headers.join(',');

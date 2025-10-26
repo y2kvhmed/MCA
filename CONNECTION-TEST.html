@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Supabase Connection Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <h1>Supabase Connection Test</h1>
+    <div id="results"></div>
+    
+    <script>
+        const supabaseUrl = 'https://pxirgvkbrykkdutqxxhf.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4aXJndmticnlra2R1dHF4eGhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk5MDY1NjEsImV4cCI6MjA3NTQ4MjU2MX0.90BO0hVXJszO35lMgTKLiSrbkZ1gPP1q9zgZLiUxA5w';
+        
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+        
+        async function testConnection() {
+            const results = document.getElementById('results');
+            results.innerHTML = '<p>Testing connection...</p>';
+            
+            try {
+                // Test 1: Basic connection
+                results.innerHTML += '<h3>Test 1: Basic Connection</h3>';
+                const { data: schools, error: schoolsError } = await supabase
+                    .from('schools')
+                    .select('id')
+                    .limit(1);
+                
+                if (schoolsError) {
+                    results.innerHTML += `<p style="color: red;">❌ Schools Error: ${schoolsError.message}</p>`;
+                } else {
+                    results.innerHTML += `<p style="color: green;">✅ Schools: ${schools.length} records</p>`;
+                }
+                
+                // Test 2: Users
+                results.innerHTML += '<h3>Test 2: Users</h3>';
+                const { data: users, error: usersError } = await supabase
+                    .from('app_users')
+                    .select('id')
+                    .limit(1);
+                
+                if (usersError) {
+                    results.innerHTML += `<p style="color: red;">❌ Users Error: ${usersError.message}</p>`;
+                } else {
+                    results.innerHTML += `<p style="color: green;">✅ Users: ${users.length} records</p>`;
+                }
+                
+                // Test 3: Assignments
+                results.innerHTML += '<h3>Test 3: Assignments</h3>';
+                const { data: assignments, error: assignmentsError } = await supabase
+                    .from('assignments')
+                    .select('id')
+                    .limit(1);
+                
+                if (assignmentsError) {
+                    results.innerHTML += `<p style="color: red;">❌ Assignments Error: ${assignmentsError.message}</p>`;
+                } else {
+                    results.innerHTML += `<p style="color: green;">✅ Assignments: ${assignments.length} records</p>`;
+                }
+                
+                // Test 4: Auth status
+                results.innerHTML += '<h3>Test 4: Auth Status</h3>';
+                const { data: { session }, error: authError } = await supabase.auth.getSession();
+                
+                if (authError) {
+                    results.innerHTML += `<p style="color: red;">❌ Auth Error: ${authError.message}</p>`;
+                } else if (session) {
+                    results.innerHTML += `<p style="color: green;">✅ Logged in as: ${session.user.email}</p>`;
+                } else {
+                    results.innerHTML += `<p style="color: orange;">⚠️ Not logged in</p>`;
+                }
+                
+            } catch (error) {
+                results.innerHTML += `<p style="color: red;">❌ Connection failed: ${error.message}</p>`;
+            }
+        }
+        
+        // Run test when page loads
+        testConnection();
+    </script>
+</body>
+</html>

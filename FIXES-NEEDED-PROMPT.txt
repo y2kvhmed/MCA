@@ -1,0 +1,294 @@
+COMPREHENSIVE FIX REQUEST FOR PHYSICS LEARNING APP
+
+CONTEXT:
+This is a React Native/Expo physics learning app with Supabase backend. The app has admin, teacher, and student roles. Schools contain teachers and students (NO CLASSES/GROUPS). The database SQL (COMPLETE-FIX.sql) has been run successfully.
+
+CRITICAL REQUIREMENTS - FIX ALL OF THESE:
+
+═══════════════════════════════════════════════════════════════
+SECTION 1: DELETE FUNCTIONALITY (NOT WORKING)
+═══════════════════════════════════════════════════════════════
+
+1.1 DELETE ASSIGNMENT NOT WORKING
+- File: physics-learning/app/delete-assignment.tsx
+- Issue: When clicking delete button, nothing happens
+- Fix: Ensure the delete function actually calls Supabase delete and handles errors properly
+- Verify: Assignments should be deleted from database and user redirected back
+
+1.2 DELETE MATERIAL NOT WORKING  
+- File: physics-learning/app/delete-material.tsx
+- Issue: Delete button doesn't work
+- Fix: Ensure material deletion works with proper file cleanup from storage
+- Verify: Materials deleted from database and storage bucket
+
+1.3 DELETE SCHOOL NOT WORKING
+- Issue: School deletion fails
+- Fix: Use the delete_school_cascade function created in SQL
+- Verify: School and all related data (users, assignments, materials) are deleted
+
+═══════════════════════════════════════════════════════════════
+SECTION 2: FILE UPLOAD ISSUES (CRITICAL - NOTHING UPLOADS)
+═══════════════════════════════════════════════════════════════
+
+2.1 MATERIAL FILE UPLOAD NOT WORKING
+- File: physics-learning/app/create-material.tsx
+- Issue: File picker doesn't work, files don't upload to Supabase, no file shows as attached
+- Fix: Implement proper file picker and upload to 'materials' or 'study-materials' bucket
+- Verify: Files upload successfully and show "File attached" indicator
+- Verify: Students can see materials with attached files
+
+2.2 VIDEO UPLOAD FOR RECORDINGS NOT WORKING
+- File: physics-learning/app/add-recording.tsx  
+- Issue: Clicking "add video file" doesn't open file explorer, no upload happens
+- Fix: Implement video file picker (DocumentPicker for video/*) and upload to 'videos' or 'lessons' bucket
+- Verify: Video files upload and are stored in Supabase with proper video_path and video_url
+
+2.3 CHAT FILE UPLOAD NOT WORKING
+- File: physics-learning/app/(tabs)/student-chat.tsx
+- Issue: Uploading images/documents in chat doesn't work, no preview, doesn't appear in chat
+- Fix: Fix pickImage() and pickDocument() functions to properly upload to 'chat-files' bucket
+- Verify: Files upload, show preview while typing, appear in chat messages with proper display
+
+2.4 STUDENT SUBMISSION NOT WORKING
+- File: physics-learning/app/submit-assignment.tsx
+- Issue: When student clicks submit, nothing happens, file doesn't upload
+- Fix: Implement proper file upload to 'assignment-submissions' bucket and create submission record
+- Verify: Submissions are saved to database with file_path, file_url, and appear in teacher's view
+
+═══════════════════════════════════════════════════════════════
+SECTION 3: MATERIALS VISIBILITY ISSUES
+═══════════════════════════════════════════════════════════════
+
+3.1 MATERIALS NOT SHOWING TO STUDENTS
+- File: physics-learning/app/student-materials.tsx
+- Issue: Students can't see materials posted by teachers
+- Fix: Query study_materials table filtering by student's school_id
+- Verify: Students see all materials from their school
+
+3.2 MATERIALS LIST BACK BUTTON NOT WORKING
+- File: physics-learning/app/materials-list.tsx
+- Issue: Back button icon doesn't work
+- Fix: Ensure router.back() is properly called on TouchableOpacity press
+- Verify: Back button navigates to previous screen
+
+═══════════════════════════════════════════════════════════════
+SECTION 4: REMOVE ALL GRADE/SCORE REFERENCES
+═══════════════════════════════════════════════════════════════
+
+4.1 REMOVE FROM UI
+- Remove "Grade Submissions" button from teacher dashboard
+- Remove "To Grade" stat from teacher profile  
+- Remove max_score and score fields from create-assignment.tsx
+- Remove grade-related columns from all CSV exports
+- Remove "graded" status references throughout app
+
+4.2 REDEFINE STUDENT GRADES
+- File: physics-learning/app/student-grades.tsx
+- Change from: Showing actual numeric grades
+- Change to: Show list of assignments with "Submitted" or "Missing" status
+- Add: Overall completion percentage (submitted assignments / total assignments * 100)
+- Display: Assignment name, due date, status (Submitted/Missing)
+
+4.3 CSV EXPORTS - REMOVE GRADES
+- Files: physics-learning/app/school-reports.tsx, physics-learning/lib/csvExport.ts
+- Remove: Any grade, max_score, percentage columns
+- Keep: Student name, assignment title, status (Submitted/Missing), submission date
+- Do NOT include materials in assignment CSV exports
+
+═══════════════════════════════════════════════════════════════
+SECTION 5: TEACHER SCHOOL ASSIGNMENT ISSUES
+═══════════════════════════════════════════════════════════════
+
+5.1 TEACHER SHOWS "NOT ASSIGNED" DESPITE HAVING SCHOOL
+- Files: Multiple dashboard and profile files
+- Issue: Teachers with school_id still show "not assigned"
+- Fix: Check if user.school_id exists and is not null before showing "not assigned"
+- Verify: Teachers see their school name correctly
+
+5.2 CHAT SCHOOL SELECTOR LOGIC
+- File: physics-learning/app/(tabs)/student-chat.tsx, physics-learning/app/school-chooser.tsx
+- Current: Teachers can pick any school chat even if assigned to only one
+- Fix: If teacher has only ONE school_id, go directly to that school's chat (no selector)
+- Fix: If teacher has multiple schools in assigned_schools array, show selector with ONLY those schools
+- Fix: Students always use their school_id (no selector)
+- Verify: Single-school teachers go straight to chat, multi-school teachers see only their schools
+
+5.3 REMOVE ADMIN CHAT ACCESS
+- File: physics-learning/app/(tabs)/_layout.tsx
+- Issue: Admins shouldn't have chat access
+- Fix: Remove chat tab for admin role
+- Verify: Admin dashboard doesn't show chat option
+
+═══════════════════════════════════════════════════════════════
+SECTION 6: ADMIN MULTI-SCHOOL TEACHER CREATION
+═══════════════════════════════════════════════════════════════
+
+6.1 MULTI-SELECT SCHOOLS FOR TEACHERS
+- File: physics-learning/app/create-user.tsx
+- Current: Can only assign one school
+- Fix: When creating teacher, allow admin to select multiple schools (checkboxes)
+- Store: Save selected school IDs in assigned_schools array column
+- Also set: school_id to the first selected school (for backwards compatibility)
+- Verify: Teachers can be assigned to multiple schools
+
+═══════════════════════════════════════════════════════════════
+SECTION 7: CSV EXPORT IMPROVEMENTS
+═══════════════════════════════════════════════════════════════
+
+7.1 ADMIN VIEW USERS - ADD CSV EXPORT ICON
+- File: physics-learning/app/view-users.tsx
+- Add: CSV export icon in header (like download icon)
+- Export: All user info (name, email, role, school, phone, parent_phone, grade_level, active status, created date)
+- Do NOT add a button in the page content
+
+7.2 REMOVE CSV BUTTON FROM ADMIN DASHBOARD
+- File: physics-learning/app/(tabs)/admin-dashboard.tsx
+- Remove: "Export All Users CSV" button from the actions section
+- Keep: Only the icon-based export in view-users.tsx
+
+7.3 ASSIGNMENT REPORTS CSV
+- File: physics-learning/app/assignment-reports.tsx
+- Include: Student name, assignment title, status (Submitted/Missing), submission date
+- Exclude: Grades, scores, percentages, materials
+- Show: Different data per assignment (which students submitted vs missing)
+
+═══════════════════════════════════════════════════════════════
+SECTION 8: EMAIL FUNCTIONALITY
+═══════════════════════════════════════════════════════════════
+
+8.1 FIX EMAIL SENDING
+- File: physics-learning/lib/emailService.ts
+- Issue: Emails not being sent
+- Current: Uses simulated email sending
+- Fix: Implement actual email sending using Supabase Edge Function or external service
+- Note: If no email service available, at least log properly and show user feedback
+- Verify: Email sending attempts are logged and user gets proper feedback
+
+═══════════════════════════════════════════════════════════════
+SECTION 9: CRITICAL BUG FIXES
+═══════════════════════════════════════════════════════════════
+
+9.1 FIX ALL FILE UPLOAD MECHANISMS
+- Ensure DocumentPicker is properly imported and called
+- Ensure file reading works (fetch for web, FileSystem for mobile)
+- Ensure Supabase storage upload works with proper bucket names
+- Add proper error handling and user feedback
+- Show upload progress/loading states
+
+9.2 FIX SUBMISSION FLOW
+- Student selects file → File uploads to storage → Submission record created → Teacher can see it
+- Ensure all steps work and have proper error handling
+
+9.3 FIX MATERIALS FLOW  
+- Teacher uploads file → Material created with file_path and file_url → Students from same school can see it
+- Ensure proper school_id filtering
+
+═══════════════════════════════════════════════════════════════
+IMPLEMENTATION CHECKLIST
+═══════════════════════════════════════════════════════════════
+
+STEP 1: Fix delete-assignment.tsx
+- Ensure delete actually executes
+- Add proper error handling
+- Verify navigation after delete
+
+STEP 2: Fix delete-material.tsx  
+- Ensure delete executes with file cleanup
+- Add proper error handling
+
+STEP 3: Fix create-material.tsx
+- Implement working file picker
+- Implement working file upload to Supabase storage
+- Save file_path, file_url, file_name, file_size to study_materials table
+- Show upload success feedback
+
+STEP 4: Fix add-recording.tsx
+- Implement working video file picker (DocumentPicker with type: 'video/*')
+- Implement working video upload to Supabase storage
+- Save video_path, video_url to lessons table
+- Show upload success feedback
+
+STEP 5: Fix student-chat.tsx
+- Fix pickImage() to work properly
+- Fix pickDocument() to work properly  
+- Implement upload to 'chat-files' bucket
+- Save file info to messages table
+- Display uploaded files in chat
+
+STEP 6: Fix submit-assignment.tsx
+- Implement working file picker
+- Implement working file upload to 'assignment-submissions' bucket
+- Create submission record with file_path and file_url
+- Show success message and navigate back
+
+STEP 7: Fix student-materials.tsx
+- Query study_materials WHERE school_id = student's school_id
+- Display all materials with file download links
+- Show proper empty state if no materials
+
+STEP 8: Remove grade/score references
+- Remove from create-assignment.tsx (max_score field)
+- Remove from teacher-dashboard.tsx (grade submissions button)
+- Remove from teacher-profile.tsx (to grade stat)
+- Remove from all CSV exports
+- Update student-grades.tsx to show submission status instead
+
+STEP 9: Fix teacher school assignment
+- Check user.school_id properly in all teacher views
+- Show school name instead of "not assigned"
+- Fix chat selector to respect teacher's assigned schools
+
+STEP 10: Fix admin features
+- Add CSV export icon to view-users.tsx header
+- Remove CSV button from admin-dashboard.tsx
+- Remove chat tab from admin layout
+
+STEP 11: Implement multi-school teacher creation
+- Add checkbox list of schools in create-user.tsx when role is teacher
+- Save selected schools to assigned_schools array
+- Set school_id to first selected school
+
+STEP 12: Test everything
+- Test all file uploads (materials, videos, chat, submissions)
+- Test all delete operations
+- Test materials visibility for students
+- Test teacher school assignment display
+- Test chat school selector logic
+- Test CSV exports
+
+═══════════════════════════════════════════════════════════════
+IMPORTANT NOTES
+═══════════════════════════════════════════════════════════════
+
+- The app uses Expo Router for navigation
+- Storage buckets: materials, study-materials, videos, lessons, chat-files, assignment-submissions
+- NO CLASSES/GROUPS - everything is school-based
+- File uploads must work for both web and mobile (use fetch for web, FileSystem for mobile)
+- All file uploads should use DocumentPicker from 'expo-document-picker'
+- Image uploads should use ImagePicker from 'expo-image-picker'
+- Supabase storage upload format: supabase.storage.from(bucket).upload(path, blob)
+- Always get public URL after upload: supabase.storage.from(bucket).getPublicUrl(path)
+
+═══════════════════════════════════════════════════════════════
+EXPECTED OUTCOME
+═══════════════════════════════════════════════════════════════
+
+After all fixes:
+✅ All delete operations work (assignments, materials, schools)
+✅ All file uploads work (materials, videos, chat, submissions)
+✅ Students can see materials from their school
+✅ Students can submit assignments with files
+✅ Teachers see correct school assignment
+✅ Chat selector shows only assigned schools for teachers
+✅ No grade/score references in UI or CSV exports
+✅ Student grades show submission status and completion percentage
+✅ Admin can assign teachers to multiple schools
+✅ CSV exports work with correct data
+✅ No admin chat access
+✅ All navigation works properly
+
+═══════════════════════════════════════════════════════════════
+START WITH THIS PROMPT IN NEXT CHAT:
+═══════════════════════════════════════════════════════════════
+
+"I need you to fix all the issues in my physics learning app. Read the file FIXES-NEEDED-PROMPT.txt which contains all the detailed requirements. The SQL database setup (COMPLETE-FIX.sql) has already been run successfully. Now I need you to systematically fix each code issue listed in the prompt file. Start with the most critical issues first (file uploads and delete operations) and work through the entire checklist. Make sure EVERYTHING works exactly as specified."

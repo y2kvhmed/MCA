@@ -123,18 +123,10 @@ export default function TeacherDashboard() {
             
             <TouchableOpacity 
               style={styles.actionButton}
-              onPress={() => router.push('/class-management')}
+              onPress={() => router.push('/student-materials')}
             >
-              <Ionicons name="school" size={24} color={Colors.info} />
-              <Text style={styles.actionText}>Manage Classes</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={() => router.push('/grade-book')}
-            >
-              <Ionicons name="clipboard" size={24} color={Colors.success} />
-              <Text style={styles.actionText}>Gradebook</Text>
+              <Ionicons name="folder" size={24} color={Colors.info} />
+              <Text style={styles.actionText}>Materials</Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -147,17 +139,9 @@ export default function TeacherDashboard() {
             
             <TouchableOpacity 
               style={styles.actionButton}
-              onPress={() => router.push('/recordings')}
-            >
-              <Ionicons name="library" size={24} color={Colors.error} />
-              <Text style={styles.actionText}>Recordings</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.actionButton}
               onPress={() => router.push('/students-list')}
             >
-              <Ionicons name="people" size={24} color={Colors.primary} />
+              <Ionicons name="people" size={24} color={Colors.success} />
               <Text style={styles.actionText}>Students</Text>
             </TouchableOpacity>
           </View>

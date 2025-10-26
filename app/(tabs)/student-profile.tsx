@@ -44,7 +44,7 @@ export default function StudentProfile() {
   };
 
   const handleLogout = async () => {
-    console.log('Logout clicked');
+
     try {
       // Clear all storage
       await AsyncStorage.clear();

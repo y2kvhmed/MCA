@@ -9,9 +9,7 @@ import { useEffect } from 'react';
 import { registerForPushNotificationsAsync, savePushToken } from '../lib/notifications';
 import { getCurrentUser, checkUserActiveStatus } from '../lib/auth';
 import { useRouter } from 'expo-router';
-import { logDiagnostics } from '../lib/diagnostics';
-import { logStartupValidation } from '../lib/startupValidator';
-import { logHealthCheck } from '../lib/healthCheck';
+
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component<
@@ -90,12 +88,9 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
-    // Run diagnostics in development
+    // Development logging
     if (__DEV__) {
       console.log('🚀 Starting Physics Learning App...');
-      logDiagnostics();
-      logStartupValidation();
-      logHealthCheck();
     }
     
     initializeNotifications();
@@ -155,7 +150,7 @@ export default function RootLayout() {
               <Stack.Screen name="(tabs)" />
               <Stack.Screen name="create-school" />
               <Stack.Screen name="create-user" />
-              <Stack.Screen name="group-management" />
+
               <Stack.Screen name="view-users" />
               <Stack.Screen name="student-materials" />
               <Stack.Screen name="settings" />

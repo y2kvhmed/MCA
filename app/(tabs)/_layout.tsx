@@ -34,19 +34,13 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="student-chat"
-          options={{
-            title: 'Chat',
-            tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" size={size} color={color} />
-          }}
-        />
-        <Tabs.Screen
           name="admin-profile"
           options={{
             title: 'Profile',
             tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />
           }}
         />
+        <Tabs.Screen name="student-chat" options={{ href: null }} />
         <Tabs.Screen name="teacher-dashboard" options={{ href: null }} />
         <Tabs.Screen name="teacher-profile" options={{ href: null }} />
         <Tabs.Screen name="student-dashboard" options={{ href: null }} />

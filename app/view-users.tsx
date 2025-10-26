@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getUsers, deleteUser, deactivateUser, activateUser } from '../lib/database';
 import { handleError, showSuccess } from '../lib/utils';
-import { Alert } from 'react-native';
+import { exportToCSV } from '../lib/csvExport';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
@@ -77,6 +77,27 @@ export default function ViewUsers() {
       }
     } catch (error) {
       handleError(error, `Failed to ${action} user`);
+    }
+  };
+
+  const exportUsersCSV = async () => {
+    try {
+      const csvData = users.map(user => ({
+        'Name': user.name,
+        'Email': user.email,
+        'Role': user.role,
+        'School': user.school?.name || 'Not assigned',
+        'Phone': user.phone || 'N/A',
+        'Parent Phone': user.parent_phone || 'N/A',
+        'Grade Level': user.grade_level || 'N/A',
+        'Status': user.is_active ? 'Active' : 'Inactive',
+        'Created Date': new Date(user.created_at).toLocaleDateString(),
+      }));
+
+      await exportToCSV(csvData, 'all-users');
+      showSuccess('Users list exported successfully');
+    } catch (error) {
+      handleError(error, 'Failed to export CSV');
     }
   };
 
@@ -170,7 +191,9 @@ export default function ViewUsers() {
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>All Users</Text>
-        <View style={{ width: 24 }} />
+        <TouchableOpacity onPress={exportUsersCSV}>
+          <Ionicons name="download" size={24} color={Colors.primary} />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.filterContainer}>

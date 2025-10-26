@@ -16,6 +16,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import DateTimePicker from '../components/DateTimePicker';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
+import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 export default function CreateAssignment() {
   const router = useRouter();
@@ -75,8 +77,6 @@ export default function CreateAssignment() {
       return;
     }
 
-    // Since we're using school-based system, we don't need class selection anymore
-
     if (!user) {
       Alert.alert('Error', 'User not found');
       return;
@@ -84,121 +84,77 @@ export default function CreateAssignment() {
 
     setSubmitting(true);
     try {
-      let filePath = null;
-      let fileName = null;
-      let fileSize = null;
-
-      // Upload files if selected (for materials)
-      const uploadedFiles: any[] = [];
-      if (selectedFiles.length > 0 && assignmentType === 'material') {
-        setUploading(true);
-        
-        for (let i = 0; i < selectedFiles.length; i++) {
-          const file = selectedFiles[i];
-          
-          // Validate file first
-          const validation = validateFile(file);
-          if (!validation.isValid) {
-            handleError(null, `${file.name}: ${validation.error}`);
-            setUploading(false);
-            return;
-          }
-          
-          // Generate file path
-          const filePathGenerated = generateFilePath(
-            'materials',
-            user.id,
-            file.name,
-            `school_${user.school_id}`
-          );
-          
-          // Upload to Supabase
-          const uploadResult = await uploadFileToSupabase(
-            file,
-            'materials',
-            filePathGenerated
-          );
-          
-          if (uploadResult.success) {
-            uploadedFiles.push({
-              path: uploadResult.data?.path,
-              name: file.name,
-              size: file.size,
-              type: file.type,
-            });
-          } else {
-            handleError(null, `Failed to upload ${file.name}: ${uploadResult.error}`);
-            setUploading(false);
-            return;
-          }
-        }
-        setUploading(false);
-      }
-
-      // For now, store the first file in the main fields (backward compatibility)
-      if (uploadedFiles.length > 0) {
-        filePath = uploadedFiles[0].path;
-        fileName = uploadedFiles[0].name;
-        fileSize = uploadedFiles[0].size;
-      }
+      console.log('Creating assignment/material:', { title, assignmentType, user: user.id });
 
       if (assignmentType === 'material') {
         // Create material in study_materials table
         const materialData = {
-          title,
-          description,
-          uploaded_by: user.id,
-          file_path: filePath,
-          file_url: uploadedFiles[0]?.publicUrl,
-          file_size: fileSize,
-          material_type: fileName?.split('.').pop() || 'pdf',
+          title: title.trim(),
+          description: description.trim(),
+          subject: 'Physics',
+          grade_level: null,
+          created_by: user.id,
+          school_id: user.school_id,
+          is_published: true,
+          content_type: 'text',
+          file_url: null,
+          file_path: null,
+          file_size: null
         };
 
-        const { error } = await createMaterial(materialData);
+        console.log('Inserting material:', materialData);
+
+        const { data, error } = await supabase
+          .from('study_materials')
+          .insert(materialData)
+          .select()
+          .single();
+
         if (error) {
+          console.error('Material creation error:', error);
           throw error;
         }
+
+        console.log('Material created successfully:', data);
+        showSuccess('Material shared with all students successfully');
       } else {
         // Create assignment in assignments table
         const assignmentData = {
-          title,
-          description,
-          instructions,
-          teacher_id: user.id,
-          assignment_type: assignmentType,
+          title: title.trim(),
+          description: description.trim(),
+          subject: 'Physics',
+          grade_level: null,
+          due_date: dueDate?.toISOString() || null,
+          created_by: user.id,
           school_id: user.school_id,
-          class_id: null,
-          max_score: parseInt(maxScore) || 100,
-          due_date: dueDate?.toISOString(),
-          file_path: filePath,
-          file_name: fileName,
-          file_size: fileSize,
+          material_id: null,
+          max_points: parseInt(maxScore) || 100,
+          is_published: true
         };
 
-        const { error } = await createAssignment(assignmentData);
+        console.log('Inserting assignment:', assignmentData);
+
+        const { data, error } = await supabase
+          .from('assignments')
+          .insert(assignmentData)
+          .select()
+          .single();
+
         if (error) {
+          console.error('Assignment creation error:', error);
           throw error;
         }
+
+        console.log('Assignment created successfully:', data);
+        showSuccess('Assignment created successfully');
       }
       
-      if (error) {
-        handleError(error, `Failed to create ${assignmentType}`);
-      } else {
-        const successMessage = assignmentType === 'material' 
-          ? 'Material shared with all students successfully'
-          : 'Assignment created successfully';
-        showSuccess(successMessage);
-        
-        // Send notification to all students in school
-        // TODO: Implement school-wide notifications
-        
-        router.back();
-      }
+      router.back();
     } catch (error) {
-      handleError(error, 'An unexpected error occurred');
+      console.error('Submit error:', error);
+      handleError(error, `Failed to create ${assignmentType}`);
     } finally {
       setSubmitting(false);
-      setUploading(false);
     }
   };
 
@@ -283,14 +239,6 @@ export default function CreateAssignment() {
 
         {assignmentType !== 'material' && (
           <>
-            <Input
-              label="Max Score"
-              value={maxScore}
-              onChangeText={setMaxScore}
-              placeholder="100"
-              keyboardType="numeric"
-            />
-
             <DateTimePicker
               label="Due Date & Time"
               value={dueDate}

@@ -73,7 +73,17 @@ export default function DeleteAssignment() {
   const confirmDelete = async () => {
     setDeleting(true);
     try {
-      // Delete the assignment (submissions will be deleted automatically due to CASCADE)
+      // First delete all submissions for this assignment
+      const { error: submissionsError } = await supabase
+        .from('submissions')
+        .delete()
+        .eq('assignment_id', assignmentId);
+
+      if (submissionsError) {
+        console.warn('Submissions delete warning:', submissionsError);
+      }
+
+      // Delete the assignment
       const { error } = await supabase
         .from('assignments')
         .delete()
@@ -82,11 +92,14 @@ export default function DeleteAssignment() {
       if (error) throw error;
 
       showSuccess('Assignment deleted successfully');
-      router.replace('/assignment-overview');
+      
+      // Navigate back after a short delay to ensure state updates
+      setTimeout(() => {
+        router.back();
+      }, 500);
     } catch (error) {
       console.error('Delete error:', error);
       handleError(error, 'Failed to delete assignment');
-    } finally {
       setDeleting(false);
     }
   };
@@ -158,7 +171,7 @@ export default function DeleteAssignment() {
             onPress={handleDelete}
             loading={deleting}
             disabled={deleting}
-            style={[styles.deleteButton, { backgroundColor: Colors.error }]}
+            style={styles.deleteButton}
           />
         </View>
       </View>
@@ -245,5 +258,6 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     flex: 1,
+    backgroundColor: Colors.error,
   },
 });

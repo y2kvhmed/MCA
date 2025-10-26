@@ -44,7 +44,7 @@ export default function TeacherProfile() {
   };
 
   const handleLogout = async () => {
-    console.log('Logout clicked');
+
     try {
       // Clear all storage
       await AsyncStorage.clear();
@@ -97,9 +97,9 @@ export default function TeacherProfile() {
           <Text style={styles.sectionTitle}>Teaching Overview</Text>
           <View style={styles.statsGrid}>
             <View style={styles.statItem}>
-              <Ionicons name="school" size={24} color={Colors.primary} />
-              <Text style={styles.statValue}>{stats.myClasses || 0}</Text>
-              <Text style={styles.statLabel}>Classes</Text>
+              <Ionicons name="document-text" size={24} color={Colors.primary} />
+              <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
+              <Text style={styles.statLabel}>Assignments</Text>
             </View>
             <View style={styles.statItem}>
               <Ionicons name="people" size={24} color={Colors.info} />
@@ -107,9 +107,9 @@ export default function TeacherProfile() {
               <Text style={styles.statLabel}>Students</Text>
             </View>
             <View style={styles.statItem}>
-              <Ionicons name="document-text" size={24} color={Colors.warning} />
-              <Text style={styles.statValue}>{stats.pendingSubmissions || 0}</Text>
-              <Text style={styles.statLabel}>To Grade</Text>
+              <Ionicons name="checkmark-done" size={24} color={Colors.success} />
+              <Text style={styles.statValue}>{stats.totalSubmissions || 0}</Text>
+              <Text style={styles.statLabel}>Submissions</Text>
             </View>
           </View>
         </Card>
@@ -135,23 +135,7 @@ export default function TeacherProfile() {
         <Card style={styles.actionsCard}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           
-          <TouchableOpacity 
-            style={styles.actionItem}
-            onPress={() => router.push('/class-management')}
-          >
-            <Ionicons name="school" size={24} color={Colors.primary} />
-            <Text style={styles.actionText}>Manage Classes</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.actionItem}
-            onPress={() => router.push('/grade-book')}
-          >
-            <Ionicons name="clipboard" size={24} color={Colors.info} />
-            <Text style={styles.actionText}>Gradebook</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
+
           
           <TouchableOpacity 
             style={styles.actionItem}

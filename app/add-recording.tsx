@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { getSchools, createLesson } from '../lib/database';
 import { handleError, showSuccess } from '../lib/utils';
+import { supabase } from '../lib/supabase';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -48,8 +49,77 @@ export default function AddRecording() {
     }
   };
 
-  const handleVideoSelect = (file: any) => {
-    setVideoFile(file);
+  const pickVideo = async () => {
+    try {
+      const { DocumentPicker } = await import('expo-document-picker');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'video/*',
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const file = result.assets[0];
+        
+        // Check file size (max 100MB)
+        if (file.size && file.size > 100 * 1024 * 1024) {
+          Alert.alert('Error', 'Video file size must be less than 100MB');
+          return;
+        }
+
+        setVideoFile(file);
+        showSuccess('Video file selected successfully');
+      }
+    } catch (error) {
+      console.error('Video picker error:', error);
+      handleError(error, 'Failed to pick video file');
+    }
+  };
+
+  const uploadVideoToSupabase = async (file: any) => {
+    try {
+      // Read file as blob
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      
+      // Create unique filename
+      const fileExt = file.name?.split('.').pop() || 'mp4';
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `videos/${selectedSchool === 'all' ? 'global' : selectedSchool}/${fileName}`;
+
+      // Try multiple bucket names for video upload
+      let uploadResult;
+      const bucketNames = ['videos', 'lessons', 'materials'];
+      
+      for (const bucketName of bucketNames) {
+        uploadResult = await supabase.storage
+          .from(bucketName)
+          .upload(filePath, blob, {
+            contentType: file.mimeType || 'video/mp4',
+            upsert: false
+          });
+        
+        if (!uploadResult.error) {
+          // Get public URL
+          const { data: urlData } = supabase.storage
+            .from(bucketName)
+            .getPublicUrl(filePath);
+
+          return {
+            success: true,
+            path: filePath,
+            url: urlData.publicUrl,
+            bucket: bucketName
+          };
+        }
+      }
+
+      throw new Error(uploadResult?.error?.message || 'All upload attempts failed');
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Upload failed'
+      };
+    }
   };
 
   const handleSubmit = async () => {
@@ -70,18 +140,22 @@ export default function AddRecording() {
 
     setSubmitting(true);
     try {
-      // TODO: Upload video file to Supabase storage
-      // For now, we'll use a placeholder path
-      const videoPath = `videos/${Date.now()}_${videoFile.name}`;
+      // Upload video file to Supabase storage
+      const uploadResult = await uploadVideoToSupabase(videoFile);
+      
+      if (!uploadResult.success) {
+        throw new Error(uploadResult.error);
+      }
       
       const lessonData = {
         title: title.trim(),
         description: description.trim() || undefined,
-        video_path: videoPath,
+        video_path: uploadResult.path,
+        video_url: uploadResult.url,
         duration_minutes: duration ? parseInt(duration) : undefined,
         lesson_type: 'video',
         teacher_id: user.id,
-        class_id: null, // We're not using classes anymore
+        class_id: null,
         school_id: selectedSchool === 'all' ? null : selectedSchool,
         is_published: true,
       };
@@ -93,8 +167,8 @@ export default function AddRecording() {
       } else {
         showSuccess(
           selectedSchool === 'all' 
-            ? 'Recording added for all schools' 
-            : 'Recording added successfully'
+            ? 'Recording uploaded and added for all schools' 
+            : 'Recording uploaded and added successfully'
         );
         router.back();
       }
@@ -139,10 +213,7 @@ export default function AddRecording() {
           <Text style={styles.label}>Video File *</Text>
           <TouchableOpacity
             style={styles.fileSelector}
-            onPress={() => {
-              // TODO: Implement file picker
-              Alert.alert('File Upload', 'Video file upload will be implemented with proper file picker');
-            }}
+            onPress={pickVideo}
           >
             <Ionicons name="cloud-upload-outline" size={24} color={Colors.primary} />
             <Text style={styles.fileSelectorText}>
