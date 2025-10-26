@@ -4,11 +4,7 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": null,
-  "functions": {
-    "app/**": {
-      "maxDuration": 30
-    }
-  },
+
   "rewrites": [
     {
       "source": "/((?!_next|favicon.ico|.*\\.).*)",
