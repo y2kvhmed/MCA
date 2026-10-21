@@ -428,13 +428,57 @@ export default function AssignmentDetails() {
                   </TouchableOpacity>
                 )}
 
-                {/* Teacher Feedback */}
-                {submission.feedback && (
+                {/* Grade Section */}
+                <View style={styles.gradeBoxContainer}>
+                  <View style={styles.gradeBoxHeader}>
+                    <Ionicons 
+                      name={submission.grade !== null && submission.grade !== undefined ? "ribbon-outline" : "time-outline"} 
+                      size={20} 
+                      color={submission.grade !== null && submission.grade !== undefined ? Colors.success : Colors.primary} 
+                    />
+                    <Text style={styles.gradeBoxTitle}>Grade</Text>
+                    <View style={[
+                      styles.gradeStatusTag, 
+                      { backgroundColor: (submission.grade !== null && submission.grade !== undefined ? Colors.success : Colors.info) + '20' }
+                    ]}>
+                      <Text style={[
+                        styles.gradeStatusTagText, 
+                        { color: submission.grade !== null && submission.grade !== undefined ? Colors.success : Colors.info }
+                      ]}>
+                        {submission.grade !== null && submission.grade !== undefined ? 'GRADED' : 'NOT GRADED'}
+                      </Text>
+                    </View>
+                  </View>
+                  
+                  {submission.grade !== null && submission.grade !== undefined && !isNaN(Number(submission.grade)) ? (
+                    <View style={styles.gradeDisplayRow}>
+                      <Text style={styles.gradeDisplayBig}>
+                        {submission.grade}
+                        <Text style={styles.gradeDisplayMax}> / {assignment.max_score || 100}</Text>
+                      </Text>
+                      {assignment.max_score ? (
+                        <Text style={styles.gradePercentageText}>
+                          ({Math.round((Number(submission.grade) / Number(assignment.max_score)) * 100)}%)
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Text style={styles.notGradedExplainer}>
+                      Not graded yet or assignment does not require a grade.
+                    </Text>
+                  )}
+                </View>
+
+                {/* Teacher Feedback / Comment */}
+                {submission.feedback ? (
                   <View style={styles.feedbackContainer}>
-                    <Text style={styles.feedbackTitle}>Teacher Comment:</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <Ionicons name="chatbubble-ellipses" size={16} color={Colors.primary} />
+                      <Text style={styles.feedbackTitle}>Teacher Comment:</Text>
+                    </View>
                     <Text style={styles.feedbackText}>{submission.feedback}</Text>
                   </View>
-                )}
+                ) : null}
               </View>
             )}
           </AnimatedCard>
@@ -787,5 +831,62 @@ const styles = StyleSheet.create({
   },
   downloadActionButton: {
     flex: 1,
+  },
+  gradeBoxContainer: {
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    backgroundColor: Colors.card.background,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  gradeBoxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: Spacing.sm,
+  },
+  gradeBoxTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  gradeStatusTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  gradeStatusTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  gradeDisplayRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginTop: 4,
+  },
+  gradeDisplayBig: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: Colors.success,
+  },
+  gradeDisplayMax: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+  },
+  gradePercentageText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+  },
+  notGradedExplainer: {
+    fontSize: 13,
+    color: Colors.text.secondary,
+    fontStyle: 'italic',
+    marginTop: 2,
   },
 });

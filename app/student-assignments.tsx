@@ -187,11 +187,13 @@ export default function StudentAssignments() {
                       </Text>
                     </View>
                     
-                    {assignment.submissions && assignment.submissions.length > 0 && assignment.submissions[0].grade !== null && (
+                    {assignment.submissions && assignment.submissions.length > 0 && assignment.submissions[0].grade !== null && assignment.submissions[0].grade !== undefined ? (
                       <Text style={styles.gradeText}>
-                        {assignment.submissions[0].grade}/{assignment.max_score}
+                        Grade: {assignment.submissions[0].grade}/{assignment.max_score || 100}
                       </Text>
-                    )}
+                    ) : assignment.submissions && assignment.submissions.length > 0 ? (
+                      <Text style={styles.notGradedBadgeText}>Not Graded</Text>
+                    ) : null}
                   </View>
                 </View>
 
@@ -332,9 +334,15 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   gradeText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
     color: Colors.success,
+  },
+  notGradedBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+    fontStyle: 'italic',
   },
   assignmentDescription: {
     fontSize: 14,

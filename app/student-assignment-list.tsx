@@ -187,6 +187,24 @@ export default function StudentAssignmentList() {
                         </Text>
                       </View>
                     )}
+
+                    {hasSubmission && (
+                      <View style={styles.metaItem}>
+                        <Ionicons 
+                          name={submission.grade !== null && submission.grade !== undefined ? "ribbon" : "time-outline"} 
+                          size={14} 
+                          color={submission.grade !== null && submission.grade !== undefined ? Colors.success : Colors.text.secondary} 
+                        />
+                        <Text style={[
+                          styles.metaText,
+                          submission.grade !== null && submission.grade !== undefined && { color: Colors.success, fontWeight: '700' }
+                        ]}>
+                          {submission.grade !== null && submission.grade !== undefined 
+                            ? `Grade: ${submission.grade}/${assignment.max_score || 100}` 
+                            : 'Not Graded'}
+                        </Text>
+                      </View>
+                    )}
                   </View>
 
 

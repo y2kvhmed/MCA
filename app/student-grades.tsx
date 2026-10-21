@@ -20,6 +20,8 @@ interface AssignmentProgress {
   created_at: string;
   status: 'submitted' | 'missing';
   submitted_at?: string;
+  grade?: number | null;
+  max_score?: number;
   feedback?: string;
 }
 
@@ -88,6 +90,8 @@ export default function StudentGrades() {
           created_at: assignment.created_at,
           status,
           submitted_at: submission?.submitted_at,
+          grade: submission?.grade,
+          max_score: assignment.max_score || 100,
           feedback: submission?.feedback,
         };
       });
@@ -230,6 +234,31 @@ export default function StudentGrades() {
                         </Text>
                       </View>
                     )}
+
+                    {assignment.status === 'submitted' && (
+                      <View style={styles.gradeInfoRow}>
+                        <Ionicons 
+                          name={assignment.grade !== null && assignment.grade !== undefined ? "ribbon" : "time-outline"} 
+                          size={15} 
+                          color={assignment.grade !== null && assignment.grade !== undefined ? Colors.success : Colors.text.secondary} 
+                        />
+                        <Text style={[
+                          styles.gradeValueText,
+                          assignment.grade !== null && assignment.grade !== undefined ? { color: Colors.success, fontWeight: '700' } : { color: Colors.text.secondary }
+                        ]}>
+                          {assignment.grade !== null && assignment.grade !== undefined 
+                            ? `Grade: ${assignment.grade} / ${assignment.max_score || 100}` 
+                            : 'Not Graded'}
+                        </Text>
+                      </View>
+                    )}
+
+                    {assignment.feedback ? (
+                      <View style={styles.feedbackBox}>
+                        <Text style={styles.feedbackLabel}>Teacher Comment:</Text>
+                        <Text style={styles.feedbackContent}>{assignment.feedback}</Text>
+                      </View>
+                    ) : null}
                   </View>
                   
                   <View style={styles.statusBadge}>
@@ -419,5 +448,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.text.inverse,
     marginRight: Spacing.sm,
+  },
+  gradeInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+  },
+  gradeValueText: {
+    fontSize: 13,
+  },
+  feedbackBox: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: Colors.background,
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.primary,
+  },
+  feedbackLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: 2,
+  },
+  feedbackContent: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    lineHeight: 16,
   },
 });

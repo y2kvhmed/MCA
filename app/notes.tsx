@@ -31,6 +31,9 @@ export default function NotesScreen() {
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('all');
   const [students, setStudents] = useState<any[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [showSchoolModal, setShowSchoolModal] = useState(false);
+  const [showStudentModal, setShowStudentModal] = useState(false);
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [showEditor, setShowEditor] = useState(false);
   const [editingNote, setEditingNote] = useState<any>(null);
   const [noteTitle, setNoteTitle] = useState('');
@@ -75,7 +78,17 @@ export default function NotesScreen() {
           console.warn('Error loading schools in notes:', e);
         }
         setSchools(accessibleSchools);
-        await loadStudentsList(currentUser, accessibleSchools);
+
+        let initialSchool = 'all';
+        if (currentUser.role !== 'admin') {
+          if (currentUser.school_id && accessibleSchools.some(s => s.id === currentUser.school_id)) {
+            initialSchool = currentUser.school_id;
+          } else if (accessibleSchools.length > 0) {
+            initialSchool = accessibleSchools[0].id;
+          }
+        }
+        setSelectedSchoolFilter(initialSchool);
+        await loadStudentsList(currentUser, accessibleSchools, initialSchool);
       }
     } catch (error) {
       handleError(error, 'Failed to load notes');
@@ -106,7 +119,7 @@ export default function NotesScreen() {
     }
   };
 
-  const loadStudentsList = async (currentUser: any, accessibleSchools: any[]) => {
+  const loadStudentsList = async (currentUser: any, accessibleSchools: any[], preferredSchool?: string) => {
     try {
       let query = supabase
         .from('app_users')
@@ -128,14 +141,39 @@ export default function NotesScreen() {
       const { data, error } = await query;
       if (error) throw error;
 
-      setStudents(data || []);
-      if (data && data.length > 0) {
-        const first = data[0];
-        setSelectedStudent(first);
-        await loadNotesForStudent(first.id);
+      const list = data || [];
+      setStudents(list);
+      if (list.length > 0) {
+        const targetSchool = preferredSchool || selectedSchoolFilter;
+        const initialStudent = (targetSchool && targetSchool !== 'all')
+          ? list.find(s => s.school_id === targetSchool) || list[0]
+          : list[0];
+
+        setSelectedStudent(initialStudent);
+        await loadNotesForStudent(initialStudent.id);
+      } else {
+        setSelectedStudent(null);
+        setStudentNotes([]);
       }
     } catch (error) {
       console.warn('Failed to load students:', error);
+    }
+  };
+
+  const handleSchoolChange = (schoolId: string) => {
+    hapticFeedback.selection();
+    setSelectedSchoolFilter(schoolId);
+    setShowSchoolModal(false);
+
+    const inSchool = students.filter(s => schoolId === 'all' || s.school_id === schoolId);
+    if (inSchool.length > 0) {
+      if (!selectedStudent || (schoolId !== 'all' && selectedStudent.school_id !== schoolId)) {
+        setSelectedStudent(inSchool[0]);
+        loadNotesForStudent(inSchool[0].id);
+      }
+    } else {
+      setSelectedStudent(null);
+      setStudentNotes([]);
     }
   };
 
@@ -289,6 +327,24 @@ export default function NotesScreen() {
 
   const isTeacherOrAdmin = user?.role === 'teacher' || user?.role === 'admin';
 
+  const selectedSchoolObj = schools.find(s => s.id === selectedSchoolFilter);
+  const selectedSchoolDisplayName = selectedSchoolFilter === 'all'
+    ? 'All Schools'
+    : (selectedSchoolObj?.name || 'Choose School');
+
+  const currentSchoolStudents = students.filter(s => {
+    if (!selectedSchoolFilter || selectedSchoolFilter === 'all') return true;
+    return s.school_id === selectedSchoolFilter;
+  });
+
+  const displayedStudents = currentSchoolStudents.filter(s => {
+    if (!studentSearchQuery.trim()) return true;
+    const q = studentSearchQuery.toLowerCase();
+    const nameMatch = (s.name || '').toLowerCase().includes(q);
+    const emailMatch = (s.email || '').toLowerCase().includes(q);
+    return nameMatch || emailMatch;
+  });
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -315,67 +371,95 @@ export default function NotesScreen() {
         )}
       </View>
 
-      {/* Teacher/Admin Student Selector */}
+      {/* Teacher/Admin School & Student Dropdown Selector */}
       {isTeacherOrAdmin && (
-        <View style={styles.studentSelectorSection}>
-          {schools.length > 1 && (
-            <View style={{ marginBottom: Spacing.sm }}>
-              <Text style={styles.selectorLabel}>School Category:</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', gap: 6 }}>
-                <TouchableOpacity
-                  style={[styles.studentPill, (!selectedSchoolFilter || selectedSchoolFilter === 'all') && styles.studentPillSelected]}
-                  onPress={() => setSelectedSchoolFilter('all')}
-                >
-                  <Text style={[styles.studentPillText, (!selectedSchoolFilter || selectedSchoolFilter === 'all') && styles.studentPillTextSelected]}>
-                    All Schools ({students.length})
+        <View style={styles.selectorCardContainer}>
+          <View style={styles.dropdownsWrapper}>
+            {/* School Dropdown */}
+            <View style={styles.dropdownField}>
+              <Text style={styles.dropdownFieldLabel}>School</Text>
+              <TouchableOpacity
+                style={styles.dropdownSelectorBtn}
+                onPress={() => setShowSchoolModal(true)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.dropdownSelectorLeft}>
+                  <Ionicons name="business" size={17} color={Colors.primary} />
+                  <Text style={styles.dropdownSelectorText} numberOfLines={1}>
+                    {selectedSchoolDisplayName}
                   </Text>
-                </TouchableOpacity>
-                {schools.map((sc) => {
-                  const count = students.filter(s => s.school_id === sc.id).length;
-                  const isSel = selectedSchoolFilter === sc.id;
-                  return (
-                    <TouchableOpacity
-                      key={sc.id}
-                      style={[styles.studentPill, isSel && styles.studentPillSelected]}
-                      onPress={() => setSelectedSchoolFilter(sc.id)}
-                    >
-                      <Text style={[styles.studentPillText, isSel && styles.studentPillTextSelected]}>
-                        {sc.name} ({count})
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+                </View>
+                <Ionicons name="chevron-down" size={16} color={Colors.text.tertiary} />
+              </TouchableOpacity>
             </View>
-          )}
 
-          <Text style={styles.selectorLabel}>Select Student to View / Add Notes:</Text>
-          {students.filter(s => (!selectedSchoolFilter || selectedSchoolFilter === 'all') || s.school_id === selectedSchoolFilter).length === 0 ? (
-            <Text style={styles.noStudentsText}>No students in this school</Text>
+            {/* Student Dropdown */}
+            <View style={styles.dropdownField}>
+              <Text style={styles.dropdownFieldLabel}>Student</Text>
+              <TouchableOpacity
+                style={[
+                  styles.dropdownSelectorBtn,
+                  !selectedStudent && styles.dropdownSelectorBtnEmpty,
+                ]}
+                onPress={() => {
+                  setStudentSearchQuery('');
+                  setShowStudentModal(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.dropdownSelectorLeft}>
+                  <Ionicons 
+                    name="person" 
+                    size={17} 
+                    color={selectedStudent ? Colors.primary : Colors.text.tertiary} 
+                  />
+                  <Text 
+                    style={[
+                      styles.dropdownSelectorText,
+                      !selectedStudent && styles.dropdownSelectorPlaceholder,
+                    ]} 
+                    numberOfLines={1}
+                  >
+                    {selectedStudent ? selectedStudent.name : 'Select a student...'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={16} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Active Student Summary Bar */}
+          {selectedStudent ? (
+            <View style={styles.selectedStudentCard}>
+              <View style={styles.studentAvatarBadge}>
+                <Text style={styles.studentAvatarText}>
+                  {(selectedStudent.name || 'S').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.studentInfoCol}>
+                <Text style={styles.studentInfoName} numberOfLines={1}>
+                  {selectedStudent.name}
+                </Text>
+                <Text style={styles.studentInfoSub} numberOfLines={1}>
+                  {selectedStudent.email} • {studentNotes.length} {studentNotes.length === 1 ? 'note' : 'notes'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.quickAddBtn}
+                onPress={() => openEditor()}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add" size={16} color={Colors.text.inverse} />
+                <Text style={styles.quickAddBtnText}>Add Note</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.studentPillsScroll}>
-              {students
-                .filter(s => (!selectedSchoolFilter || selectedSchoolFilter === 'all') || s.school_id === selectedSchoolFilter)
-                .map((student) => {
-                  const isSelected = selectedStudent?.id === student.id;
-                  return (
-                    <TouchableOpacity
-                      key={student.id}
-                      style={[styles.studentPill, isSelected && styles.studentPillSelected]}
-                      onPress={() => onSelectStudent(student)}
-                    >
-                      <Ionicons 
-                        name="person-circle" 
-                        size={20} 
-                        color={isSelected ? Colors.text.inverse : Colors.primary} 
-                      />
-                      <Text style={[styles.studentPillText, isSelected && styles.studentPillTextSelected]}>
-                        {student.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-            </ScrollView>
+            currentSchoolStudents.length === 0 && (
+              <View style={styles.noStudentsNotice}>
+                <Ionicons name="information-circle-outline" size={16} color={Colors.text.secondary} />
+                <Text style={styles.noStudentsNoticeText}>No students registered in this school yet.</Text>
+              </View>
+            )
           )}
         </View>
       )}
@@ -386,14 +470,6 @@ export default function NotesScreen() {
         contentContainerStyle={styles.contentContainer}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {isTeacherOrAdmin && selectedStudent && (
-          <View style={styles.studentBanner}>
-            <Ionicons name="school" size={20} color={Colors.primary} />
-            <Text style={styles.studentBannerText}>
-              Notes for: <Text style={{ fontWeight: '700' }}>{selectedStudent.name}</Text> ({studentNotes.length} notes)
-            </Text>
-          </View>
-        )}
 
         {studentNotes.length === 0 ? (
           <EmptyState
@@ -608,6 +684,191 @@ export default function NotesScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* School Dropdown Modal */}
+      <Modal
+        visible={showSchoolModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowSchoolModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.dropdownModalContent}>
+            <View style={styles.dropdownModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="business" size={20} color={Colors.primary} />
+                <Text style={styles.modalTitle}>Choose School</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowSchoolModal(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={24} color={Colors.text.secondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 360 }}>
+              {(user?.role === 'admin' || schools.length > 1) && (
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownItem,
+                    selectedSchoolFilter === 'all' && styles.dropdownItemSelected,
+                  ]}
+                  onPress={() => handleSchoolChange('all')}
+                >
+                  <View style={styles.dropdownItemIcon}>
+                    <Ionicons 
+                      name="globe-outline" 
+                      size={20} 
+                      color={selectedSchoolFilter === 'all' ? Colors.primary : Colors.text.secondary} 
+                    />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                    <Text style={[
+                      styles.dropdownItemTitle,
+                      selectedSchoolFilter === 'all' && styles.dropdownItemTitleSelected,
+                    ]}>
+                      All Schools
+                    </Text>
+                    <Text style={styles.dropdownItemSubtitle}>
+                      {students.length} total students
+                    </Text>
+                  </View>
+                  {selectedSchoolFilter === 'all' && (
+                    <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {schools.map((school) => {
+                const count = students.filter(s => s.school_id === school.id).length;
+                const isSelected = selectedSchoolFilter === school.id;
+                return (
+                  <TouchableOpacity
+                    key={school.id}
+                    style={[
+                      styles.dropdownItem,
+                      isSelected && styles.dropdownItemSelected,
+                    ]}
+                    onPress={() => handleSchoolChange(school.id)}
+                  >
+                    <View style={styles.dropdownItemIcon}>
+                      <Ionicons 
+                        name="business-outline" 
+                        size={20} 
+                        color={isSelected ? Colors.primary : Colors.text.secondary} 
+                      />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                      <Text style={[
+                        styles.dropdownItemTitle,
+                        isSelected && styles.dropdownItemTitleSelected,
+                      ]}>
+                        {school.name}
+                      </Text>
+                      <Text style={styles.dropdownItemSubtitle}>
+                        {count} {count === 1 ? 'student' : 'students'}
+                      </Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Student Dropdown Modal */}
+      <Modal
+        visible={showStudentModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowStudentModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.dropdownModalContent}>
+            <View style={styles.dropdownModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="people" size={20} color={Colors.primary} />
+                <Text style={styles.modalTitle}>Choose Student</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowStudentModal(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={24} color={Colors.text.secondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search Input */}
+            <View style={styles.dropdownSearchBox}>
+              <Ionicons name="search" size={18} color={Colors.text.tertiary} style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.dropdownSearchInput}
+                placeholder="Search student by name or email..."
+                placeholderTextColor={Colors.text.tertiary}
+                value={studentSearchQuery}
+                onChangeText={setStudentSearchQuery}
+                autoCorrect={false}
+              />
+              {studentSearchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setStudentSearchQuery('')} style={{ padding: 4 }}>
+                  <Ionicons name="close-circle" size={16} color={Colors.text.tertiary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* List */}
+            <ScrollView style={{ maxHeight: 360 }}>
+              {displayedStudents.length === 0 ? (
+                <View style={{ padding: Spacing.xl, alignItems: 'center' }}>
+                  <Ionicons name="person-outline" size={36} color={Colors.text.tertiary} />
+                  <Text style={{ marginTop: 8, fontSize: 14, color: Colors.text.secondary, textAlign: 'center' }}>
+                    {studentSearchQuery.trim()
+                      ? 'No students found matching your search.'
+                      : 'No students registered in this school.'}
+                  </Text>
+                </View>
+              ) : (
+                displayedStudents.map((student) => {
+                  const isSelected = selectedStudent?.id === student.id;
+                  const schoolName = schools.find(s => s.id === student.school_id)?.name;
+                  return (
+                    <TouchableOpacity
+                      key={student.id}
+                      style={[
+                        styles.dropdownItem,
+                        isSelected && styles.dropdownItemSelected,
+                      ]}
+                      onPress={() => {
+                        onSelectStudent(student);
+                        setShowStudentModal(false);
+                      }}
+                    >
+                      <View style={styles.dropdownStudentAvatar}>
+                        <Text style={styles.dropdownStudentAvatarText}>
+                          {(student.name || 'S').charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                        <Text style={[
+                          styles.dropdownItemTitle,
+                          isSelected && styles.dropdownItemTitleSelected,
+                        ]}>
+                          {student.name}
+                        </Text>
+                        <Text style={styles.dropdownItemSubtitle} numberOfLines={1}>
+                          {student.email}{schoolName && selectedSchoolFilter === 'all' ? ` • ${schoolName}` : ''}
+                        </Text>
+                      </View>
+                      {isSelected && (
+                        <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -636,49 +897,200 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  studentSelectorSection: {
+  selectorCardContainer: {
     backgroundColor: Colors.card.background,
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border.light,
   },
-  selectorLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.text.secondary,
-    marginBottom: Spacing.xs,
+  dropdownsWrapper: {
+    gap: Spacing.sm,
   },
-  noStudentsText: { fontSize: 13, color: Colors.text.tertiary, paddingVertical: 4 },
-  studentPillsScroll: { flexDirection: 'row' },
-  studentPill: {
+  dropdownField: {
+    width: '100%',
+  },
+  dropdownFieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.text.secondary,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dropdownSelectorBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
+    justifyContent: 'space-between',
     backgroundColor: Colors.background,
     borderWidth: 1,
     borderColor: Colors.border.medium,
-    marginRight: 8,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  studentPillSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+  dropdownSelectorBtnEmpty: {
+    borderColor: Colors.border.light,
   },
-  studentPillText: { fontSize: 13, fontWeight: '600', color: Colors.text.primary },
-  studentPillTextSelected: { color: Colors.text.inverse },
-  studentBanner: {
+  dropdownSelectorLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: Colors.primary + '10',
-    padding: Spacing.md,
-    borderRadius: 12,
-    marginBottom: Spacing.md,
+    flex: 1,
+    marginRight: 8,
   },
-  studentBannerText: { fontSize: 13, color: Colors.text.primary },
+  dropdownSelectorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  dropdownSelectorPlaceholder: {
+    color: Colors.text.tertiary,
+    fontWeight: '400',
+  },
+  selectedStudentCard: {
+    marginTop: Spacing.sm,
+    padding: Spacing.sm,
+    backgroundColor: Colors.primary + '10',
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary + '20',
+  },
+  studentAvatarBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  studentAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  studentInfoCol: {
+    flex: 1,
+  },
+  studentInfoName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  studentInfoSub: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginTop: 2,
+  },
+  quickAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  quickAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  noStudentsNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: Spacing.sm,
+    padding: Spacing.sm,
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+  },
+  noStudentsNoticeText: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+  },
+  dropdownModalContent: {
+    backgroundColor: Colors.card.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    paddingBottom: Spacing.xl,
+  },
+  dropdownModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  dropdownSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.lg,
+    marginVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 6,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    borderRadius: 10,
+  },
+  dropdownSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text.primary,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  dropdownItemSelected: {
+    backgroundColor: Colors.primary + '12',
+  },
+  dropdownItemIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownStudentAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownStudentAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  dropdownItemTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  dropdownItemTitleSelected: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  dropdownItemSubtitle: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginTop: 2,
+  },
   content: { flex: 1 },
   contentContainer: { padding: Spacing.lg },
   noteCardTouchable: {
