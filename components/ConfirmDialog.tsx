@@ -368,6 +368,6 @@ const styles = StyleSheet.create({
     color: Colors.text.inverse,
   },
   disabledText: {
-    color: Colors.text.disabled,
+    color: Colors.text.tertiary,
   },
 });

@@ -17,6 +17,7 @@ export default function EditTeacherProfile() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [assignedSchoolNames, setAssignedSchoolNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -32,6 +33,14 @@ export default function EditTeacherProfile() {
         setName(currentUser.name || '');
         setEmail(currentUser.email || '');
         setPhone(currentUser.phone || '');
+
+        const { getTeacherSchools } = await import('../lib/database');
+        const { data: schoolsData } = await getTeacherSchools(currentUser.id);
+        const names = (schoolsData || []).map((s: any) => s.name);
+        if (currentUser.school?.name && !names.includes(currentUser.school.name)) {
+          names.push(currentUser.school.name);
+        }
+        setAssignedSchoolNames(names);
       }
     } catch (error) {
       console.error('Load user error:', error);
@@ -120,7 +129,7 @@ export default function EditTeacherProfile() {
           <View style={styles.infoItem}>
             <Ionicons name="school" size={20} color={Colors.text.secondary} />
             <Text style={styles.infoText}>
-              School: {user?.school?.name || 'Not assigned'}
+              School: {assignedSchoolNames.length > 0 ? assignedSchoolNames.join(', ') : (user?.school?.name || 'Assigned School')}
             </Text>
           </View>
           

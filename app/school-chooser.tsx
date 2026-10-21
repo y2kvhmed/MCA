@@ -27,8 +27,21 @@ export default function SchoolChooser() {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
       
-      const { data } = await getSchools();
-      if (data) setSchools(data);
+      if (!currentUser) return;
+
+      if (currentUser.role === 'teacher') {
+        const { getTeacherSchools } = await import('../lib/database');
+        const { data: teacherSchools } = await getTeacherSchools(currentUser.id);
+        if (teacherSchools && teacherSchools.length > 0) {
+          setSchools(teacherSchools);
+        } else {
+          const { data } = await getSchools();
+          if (data) setSchools(data);
+        }
+      } else {
+        const { data } = await getSchools();
+        if (data) setSchools(data);
+      }
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load schools');
@@ -38,8 +51,7 @@ export default function SchoolChooser() {
   };
 
   const selectSchool = (school: any) => {
-    // Store selected school in user context or navigation params
-    router.push(`/(tabs)/student-chat?schoolId=${school.id}&schoolName=${school.name}`);
+    router.push(`/(tabs)/student-chat?schoolId=${school.id}&schoolName=${encodeURIComponent(school.name)}`);
   };
 
   if (loading) {
@@ -75,7 +87,11 @@ export default function SchoolChooser() {
                 onPress={() => selectSchool(school)}
               >
                 <View style={styles.schoolIcon}>
-                  <Ionicons name="school" size={32} color={Colors.primary} />
+                  <Ionicons 
+                    name="school" 
+                    size={32} 
+                    color={Colors.primary} 
+                  />
                 </View>
                 <View style={styles.schoolInfo}>
                   <Text style={styles.schoolName}>{school.name}</Text>

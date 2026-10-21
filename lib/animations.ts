@@ -89,6 +89,27 @@ export class PhysicsAnimations {
     );
   }
 
+  // 360 degree rotation
+  static rotate360(rotationValue: Animated.Value, duration = 800) {
+    return Animated.timing(rotationValue, {
+      toValue: 1,
+      duration,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    });
+  }
+
+  // Shake animation
+  static shake(animatedValue: Animated.Value, intensity = 10) {
+    return Animated.sequence([
+      Animated.timing(animatedValue, { toValue: -intensity, duration: 50, useNativeDriver: true }),
+      Animated.timing(animatedValue, { toValue: intensity, duration: 50, useNativeDriver: true }),
+      Animated.timing(animatedValue, { toValue: -intensity, duration: 50, useNativeDriver: true }),
+      Animated.timing(animatedValue, { toValue: intensity, duration: 50, useNativeDriver: true }),
+      Animated.timing(animatedValue, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]);
+  }
+
   // Fade in with physics-based easing
   static fadeInPhysics(animatedValue: Animated.Value, duration = 500) {
     return Animated.timing(animatedValue, {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Alert, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -7,6 +7,7 @@ import Input from '../components/Input';
 import Button from '../components/Button';
 import GeometricBackground from '../components/GeometricBackground';
 import { signIn } from '../lib/auth';
+import { supabase } from '../lib/supabase';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
@@ -16,6 +17,27 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [maintenanceInfo, setMaintenanceInfo] = useState<{ active: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('app_settings')
+          .select('maintenance_mode, maintenance_message')
+          .eq('id', 1)
+          .single();
+        if (data?.maintenance_mode) {
+          setMaintenanceInfo({
+            active: true,
+            message: data.maintenance_message || 'System maintenance in progress.',
+          });
+        }
+      } catch (e) {
+        // non-blocking
+      }
+    })();
+  }, []);
 
   const handleLogin = async () => {
     setErrorMessage(''); // Clear previous errors
@@ -27,7 +49,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const { user, error } = await signIn(email, password);
+      const { user, error } = await signIn(email.trim().toLowerCase(), password);
       
       if (error || !user) {
         // Show the specific error message from the auth system
@@ -65,6 +87,16 @@ export default function Login() {
         <View style={styles.loginPanel}>
           <Text style={styles.title}>Welcome Back</Text>
           
+          {maintenanceInfo?.active && (
+            <View style={styles.maintenanceBanner}>
+              <Ionicons name="construct-outline" size={20} color="#D97706" style={{ marginTop: 2 }} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.maintenanceBannerTitle}>System Under Maintenance</Text>
+                <Text style={styles.maintenanceBannerText}>{maintenanceInfo.message}</Text>
+              </View>
+            </View>
+          )}
+
           <Input
             label="Email"
             value={email}
@@ -153,5 +185,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: Spacing.sm,
     flex: 1,
+  },
+  maintenanceBanner: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
+    padding: Spacing.md,
+    borderRadius: 8,
+    marginBottom: Spacing.lg,
+  },
+  maintenanceBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#D97706',
+    marginBottom: 2,
+  },
+  maintenanceBannerText: {
+    fontSize: 13,
+    color: Colors.text.primary,
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  maintenanceBannerSubtext: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    fontStyle: 'italic',
   },
 });

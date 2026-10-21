@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { getSchools } from '../lib/database';
+import { getCurrentUser } from '../lib/auth';
+import { getSchools, getTeacherSchoolIds, setTeacherSchools } from '../lib/database';
 import { handleError, showSuccess, isValidEmail } from '../lib/utils';
 import Input from '../components/Input';
 import Button from '../components/Button';
@@ -18,11 +19,14 @@ export default function EditUser() {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [parentPhone, setParentPhone] = useState('');
-  const [gradeLevel, setGradeLevel] = useState('');
   const [role, setRole] = useState<'admin' | 'teacher' | 'student' | ''>('');
   const [schoolId, setSchoolId] = useState('');
+  const [selectedTeacherSchools, setSelectedTeacherSchools] = useState<string[]>([]);
   const [schools, setSchools] = useState<any[]>([]);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -32,6 +36,9 @@ export default function EditUser() {
 
   const loadData = async () => {
     try {
+      const authUser = await getCurrentUser();
+      if (authUser) setCurrentUserId(authUser.id);
+
       // Load user data
       const { data: userData, error: userError } = await supabase
         .from('app_users')
@@ -44,19 +51,42 @@ export default function EditUser() {
       setEmail(userData.email);
       setName(userData.name);
       setPhone(userData.phone || '');
-      setParentPhone(userData.parent_phone || '');
-      setGradeLevel(userData.grade_level || '');
+      setCurrentPassword(userData.password_hash || '');
       setRole(userData.role);
       setSchoolId(userData.school_id || '');
 
       // Load schools
       const { data: schoolsData } = await getSchools();
       if (schoolsData) setSchools(schoolsData);
+
+      // If teacher, load assigned schools from teacher_schools
+      if (userData.role === 'teacher') {
+        const teacherSchoolIds = await getTeacherSchoolIds(userId as string);
+        if (teacherSchoolIds && teacherSchoolIds.length > 0) {
+          setSelectedTeacherSchools(teacherSchoolIds);
+        } else if (userData.school_id) {
+          setSelectedTeacherSchools([userData.school_id]);
+        }
+      }
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load user data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleTeacherSchool = (id: string) => {
+    setSelectedTeacherSchools(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllSchools = () => {
+    if (selectedTeacherSchools.length === schools.length) {
+      setSelectedTeacherSchools([]);
+    } else {
+      setSelectedTeacherSchools(schools.map(s => s.id));
     }
   };
 
@@ -81,27 +111,53 @@ export default function EditUser() {
       return;
     }
 
-    if ((role === 'teacher' || role === 'student') && !schoolId) {
-      Alert.alert('Error', 'Please select a school');
+    if (role === 'student' && !schoolId) {
+      Alert.alert('Error', 'Please select a school for the student');
+      return;
+    }
+
+    if (role === 'teacher' && selectedTeacherSchools.length === 0) {
+      Alert.alert('Error', 'Please select at least one school for the teacher');
+      return;
+    }
+
+    if (currentUserId === userId && role !== 'admin') {
+      Alert.alert('Action Denied', 'You cannot change the role of your own administrator account.');
       return;
     }
 
     setSaving(true);
     try {
+      const primarySchool = role === 'student' ? schoolId : (selectedTeacherSchools[0] || null);
+
+      const updateData: any = {
+        email: email.trim().toLowerCase(),
+        name: name.trim(),
+        phone: phone.trim() || null,
+        role,
+        school_id: primarySchool,
+      };
+
+      if (newPassword.trim()) {
+        if (newPassword.trim().length < 6) {
+          Alert.alert('Error', 'New password must be at least 6 characters long');
+          setSaving(false);
+          return;
+        }
+        updateData.password_hash = newPassword.trim();
+      }
+
       const { error } = await supabase
         .from('app_users')
-        .update({
-          email: email.trim().toLowerCase(),
-          name: name.trim(),
-          phone: phone.trim() || null,
-          parent_phone: parentPhone.trim() || null,
-          grade_level: gradeLevel.trim() || null,
-          role,
-          school_id: schoolId || null,
-        })
+        .update(updateData)
         .eq('id', userId);
 
       if (error) throw error;
+
+      // Sync teacher_schools if role is teacher
+      if (role === 'teacher') {
+        await setTeacherSchools(userId as string, selectedTeacherSchools);
+      }
 
       showSuccess('User updated successfully');
       router.back();
@@ -110,6 +166,44 @@ export default function EditUser() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDeleteUser = () => {
+    if (currentUserId === userId) {
+      Alert.alert('Action Denied', 'You cannot delete your own administrator account.');
+      return;
+    }
+
+    const doDelete = async () => {
+      try {
+        setSaving(true);
+        const { deleteUser } = await import('../lib/database');
+        const { error } = await deleteUser(userId as string);
+        if (error) throw error;
+        showSuccess('User account deleted successfully');
+        router.back();
+      } catch (err: any) {
+        handleError(err, 'Failed to delete user');
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Are you sure you want to permanently delete "${name || email}"? This action cannot be undone.`)) {
+        doDelete();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Delete User',
+      `Are you sure you want to permanently delete "${name || email}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]
+    );
   };
 
   if (loading) {
@@ -149,21 +243,6 @@ export default function EditUser() {
           onChangeText={setPhone}
           placeholder="Enter phone number"
           keyboardType="phone-pad"
-        />
-
-        <Input
-          label="Parent/Guardian Phone"
-          value={parentPhone}
-          onChangeText={setParentPhone}
-          placeholder="Enter parent/guardian phone"
-          keyboardType="phone-pad"
-        />
-
-        <Input
-          label="Grade Level"
-          value={gradeLevel}
-          onChangeText={setGradeLevel}
-          placeholder="e.g., 9th Grade, Sophomore"
         />
 
         <Text style={styles.label}>Role *</Text>
@@ -220,32 +299,124 @@ export default function EditUser() {
           </TouchableOpacity>
         </View>
 
-        {(role === 'teacher' || role === 'student') && (
+        {role === 'student' && (
           <>
             <Text style={styles.label}>School *</Text>
             <View style={styles.schoolSelector}>
-              {schools.map((school) => (
-                <TouchableOpacity
-                  key={school.id}
-                  style={[
-                    styles.schoolButton,
-                    schoolId === school.id && styles.schoolButtonSelected,
-                  ]}
-                  onPress={() => setSchoolId(school.id)}
-                >
-                  <Text
+              {schools.map((school) => {
+                const isSelected = schoolId === school.id;
+                return (
+                  <TouchableOpacity
+                    key={school.id}
                     style={[
-                      styles.schoolButtonText,
-                      schoolId === school.id && styles.schoolButtonTextSelected,
+                      styles.schoolButton,
+                      isSelected && styles.schoolButtonSelected,
                     ]}
+                    onPress={() => setSchoolId(school.id)}
                   >
-                    {school.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <View style={styles.schoolRow}>
+                      <Ionicons
+                        name={isSelected ? "radio-button-on" : "radio-button-off"}
+                        size={18}
+                        color={isSelected ? Colors.text.inverse : Colors.text.secondary}
+                        style={{ marginRight: 10 }}
+                      />
+                      <Text
+                        style={[
+                          styles.schoolButtonText,
+                          isSelected && styles.schoolButtonTextSelected,
+                        ]}
+                      >
+                        {school.name}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </>
         )}
+
+        {role === 'teacher' && (
+          <>
+            <View style={styles.multiSchoolHeader}>
+              <Text style={styles.label}>
+                Assigned Schools * ({selectedTeacherSchools.length}/{schools.length})
+              </Text>
+              {schools.length > 0 && (
+                <TouchableOpacity onPress={toggleSelectAllSchools} style={styles.selectAllBtn}>
+                  <Text style={styles.selectAllBtnText}>
+                    {selectedTeacherSchools.length === schools.length ? 'Deselect All' : 'Select All'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={styles.subLabel}>
+              Teachers can be assigned to multiple schools. Select all that apply.
+            </Text>
+            <View style={styles.schoolSelector}>
+              {schools.map((school) => {
+                const isSelected = selectedTeacherSchools.includes(school.id);
+                return (
+                  <TouchableOpacity
+                    key={school.id}
+                    style={[
+                      styles.schoolButton,
+                      isSelected && styles.schoolButtonSelected,
+                    ]}
+                    onPress={() => toggleTeacherSchool(school.id)}
+                  >
+                    <View style={styles.schoolRow}>
+                      <Ionicons
+                        name={isSelected ? "checkbox" : "square-outline"}
+                        size={18}
+                        color={isSelected ? Colors.text.inverse : Colors.text.secondary}
+                        style={{ marginRight: 10 }}
+                      />
+                      <Text
+                        style={[
+                          styles.schoolButtonText,
+                          isSelected && styles.schoolButtonTextSelected,
+                        ]}
+                      >
+                        {school.name}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+
+        <View style={styles.passwordSection}>
+          <Text style={styles.passwordSectionHeading}>Password Management</Text>
+          <View style={styles.currentPasswordRow}>
+            <Text style={styles.currentPasswordLabel}>Current Password:</Text>
+            <Text style={styles.currentPasswordValue}>
+              {showPassword ? (currentPassword || 'None') : '••••••••'}
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowPassword(!showPassword)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.eyeToggleBtn}
+            >
+              <Ionicons
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={18}
+                color={Colors.primary}
+              />
+            </TouchableOpacity>
+          </View>
+
+          <Input
+            label="Reset Password (Leave blank to keep unchanged)"
+            value={newPassword}
+            onChangeText={setNewPassword}
+            placeholder="Enter new password (min. 6 chars)"
+            secureTextEntry
+          />
+        </View>
 
         <Button
           title="Save Changes"
@@ -254,6 +425,24 @@ export default function EditUser() {
           disabled={saving}
           style={styles.saveButton}
         />
+
+        {currentUserId !== userId ? (
+          <TouchableOpacity
+            onPress={handleDeleteUser}
+            disabled={saving}
+            style={styles.deleteUserBtn}
+          >
+            <Ionicons name="trash-outline" size={18} color={Colors.error} />
+            <Text style={styles.deleteUserBtnText}>Delete User Account</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.selfNoticeBox}>
+            <Ionicons name="shield-checkmark" size={18} color={Colors.primary} />
+            <Text style={styles.selfNoticeText}>
+              You are currently logged into this administrator account. Self-deletion is disabled.
+            </Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -341,5 +530,109 @@ const styles = StyleSheet.create({
   saveButton: {
     marginTop: Spacing.lg,
     marginBottom: Spacing.xl,
+  },
+  schoolRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  multiSchoolHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  subLabel: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginBottom: Spacing.sm,
+  },
+  selectAllBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: Colors.card.background,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+  },
+  selectAllBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  passwordSection: {
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    backgroundColor: Colors.card.background,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  passwordSectionHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
+  },
+  currentPasswordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginBottom: Spacing.md,
+  },
+  currentPasswordLabel: {
+    fontSize: 13,
+    color: Colors.text.secondary,
+    marginRight: 8,
+  },
+  currentPasswordValue: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  eyeToggleBtn: {
+    padding: 4,
+  },
+  deleteUserBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.error,
+    backgroundColor: 'transparent',
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl * 2,
+    gap: 8,
+  },
+  deleteUserBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.error,
+  },
+  selfNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.3)',
+    borderRadius: 8,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl * 2,
+    gap: 10,
+  },
+  selfNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text.primary,
+    fontWeight: '500',
+    lineHeight: 18,
   },
 });

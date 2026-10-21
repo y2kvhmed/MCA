@@ -63,8 +63,9 @@ export default function SchoolReports() {
         .select('id, grade')
         .in('assignment_id', assignments?.map(a => a.id) || []);
 
-      const avgGrade = submissions?.length > 0 
-        ? submissions.filter(s => s.grade !== null).reduce((sum, s) => sum + (s.grade || 0), 0) / submissions.filter(s => s.grade !== null).length
+      const graded = (submissions || []).filter(s => s.grade !== null);
+      const avgGrade = graded.length > 0 
+        ? graded.reduce((sum: number, s: any) => sum + (s.grade || 0), 0) / graded.length
         : 0;
 
       setStats({

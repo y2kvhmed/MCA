@@ -202,7 +202,7 @@ export default function RecordingDeleteDialog({
             )}
 
             <Text style={styles.warningFooter}>
-              ⚠️ This action cannot be undone.
+              This action cannot be undone.
             </Text>
           </ScrollView>
 
@@ -233,7 +233,7 @@ export default function RecordingDeleteDialog({
   );
 }
 
-function getDependencyIcon(type: string): string {
+function getDependencyIcon(type: string): keyof typeof Ionicons.glyphMap {
   switch (type) {
     case 'assignment':
       return 'document-text';

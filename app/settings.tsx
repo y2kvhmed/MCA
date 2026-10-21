@@ -170,6 +170,22 @@ export default function Settings() {
 
           <TouchableOpacity 
             style={styles.settingItem}
+            onPress={() => router.push('/change-password')}
+          >
+            <View style={styles.settingInfo}>
+              <Ionicons name="key-outline" size={20} color={colors.text.primary} />
+              <View style={styles.settingText}>
+                <Text style={styles.settingLabel}>Change Password</Text>
+                <Text style={styles.settingDescription}>
+                  Update your account password
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.text.secondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.settingItem}
             onPress={() => Alert.alert('Privacy Policy', 'Privacy policy content would go here.')}
           >
             <View style={styles.settingInfo}>

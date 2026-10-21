@@ -9,6 +9,7 @@ import {
   registerForPushNotifications,
   getNotificationHistory 
 } from '../lib/pushNotifications';
+import { getCurrentUser } from '../lib/auth';
 import { handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -69,7 +70,8 @@ export default function NotificationSettings() {
 
   const handleRegisterNotifications = async () => {
     try {
-      const token = await registerForPushNotifications();
+      const currentUser = await getCurrentUser();
+      const token = await registerForPushNotifications(currentUser?.id || 'current-user');
       if (token) {
         showSuccess('Push notifications enabled successfully');
       } else {

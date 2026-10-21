@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { handleError, showSuccess } from '../lib/utils';
+import { handleError, showSuccess, formatFileSize } from '../lib/utils';
 import Input from '../components/Input';
 import Button from '../components/Button';
+import LoadingSpinner from '../components/LoadingSpinner';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 import * as DocumentPicker from 'expo-document-picker';
@@ -19,19 +20,22 @@ export default function CreateMaterial() {
   const [saving, setSaving] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
-  
+
+  // Schools list and selection
+  const [schools, setSchools] = useState<any[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     subject: 'Physics',
-    grade_level: '',
   });
 
   useEffect(() => {
-    loadUser();
+    loadUserAndSchools();
   }, []);
 
-  const loadUser = async () => {
+  const loadUserAndSchools = async () => {
     try {
       const currentUser = await getCurrentUser();
       if (!currentUser) {
@@ -39,8 +43,56 @@ export default function CreateMaterial() {
         return;
       }
       setUser(currentUser);
+
+      let availableSchools: any[] = [];
+
+      if (currentUser.role === 'admin') {
+        // Admin can select ANY school, or global (all schools)
+        const { data: allSchools, error } = await supabase
+          .from('schools')
+          .select('id, name')
+          .order('name');
+        
+        if (!error && allSchools) {
+          availableSchools = allSchools;
+        }
+      } else {
+        // Teacher: load schools assigned to this teacher from teacher_schools
+        const { data: teacherSchools, error: tsError } = await supabase
+          .from('teacher_schools')
+          .select('school_id, schools(id, name)')
+          .eq('teacher_id', currentUser.id);
+
+        if (!tsError && teacherSchools && teacherSchools.length > 0) {
+          availableSchools = teacherSchools
+            .map((ts: any) => ts.schools)
+            .filter(Boolean);
+        } else if (currentUser.school_id) {
+          // Fallback to teacher's direct school_id
+          const { data: directSchool } = await supabase
+            .from('schools')
+            .select('id, name')
+            .eq('id', currentUser.school_id)
+            .single();
+          if (directSchool) availableSchools = [directSchool];
+        }
+
+        // If still no schools found, fallback to all schools so teacher isn't blocked
+        if (availableSchools.length === 0) {
+          const { data: fallbackSchools } = await supabase
+            .from('schools')
+            .select('id, name')
+            .order('name');
+          if (fallbackSchools) availableSchools = fallbackSchools;
+        }
+      }
+
+      setSchools(availableSchools);
+      if (availableSchools.length > 0) {
+        setSelectedSchoolId(availableSchools[0].id);
+      }
     } catch (error) {
-      handleError(error, 'Failed to load user data');
+      handleError(error, 'Failed to load user or schools');
     } finally {
       setLoading(false);
     }
@@ -50,16 +102,25 @@ export default function CreateMaterial() {
     try {
       setUploading(true);
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/*', 'video/*', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        type: [
+          'application/pdf',
+          'image/*',
+          'video/*',
+          'audio/*',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        ],
         copyToCacheDirectory: true,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
         const file = result.assets[0];
-        
-        // Check file size (max 50MB)
-        if (file.size && file.size > 50 * 1024 * 1024) {
-          Alert.alert('Error', 'File size must be less than 50MB');
+
+        // Check file size (max 100MB)
+        if (file.size && file.size > 100 * 1024 * 1024) {
+          Alert.alert('Error', 'File size must be less than 100MB');
           return;
         }
 
@@ -75,31 +136,33 @@ export default function CreateMaterial() {
 
   const handleFileUpload = async (file: any) => {
     if (!file) return;
-    
+
     try {
       console.log('Starting file upload for material:', file);
-      
-      // Read file as blob for React Native
-      const response = await fetch(file.uri);
-      if (!response.ok) {
-        throw new Error(`Failed to read file: ${response.statusText}`);
+
+      // On web, file.file contains the native File object
+      let blob: Blob;
+      if (Platform.OS === 'web' && file.file) {
+        blob = file.file;
+      } else {
+        const response = await fetch(file.uri);
+        if (!response.ok) {
+          throw new Error(`Failed to read file: ${response.statusText}`);
+        }
+        blob = await response.blob();
       }
-      
-      const blob = await response.blob();
-      
-      // Create a unique filename
-      const fileExt = file.name.split('.').pop();
+
+      const fileExt = file.name ? file.name.split('.').pop() : 'pdf';
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `user_${user.id}/${fileName}`;
+      const filePath = `user_${user?.id || 'admin'}/${fileName}`;
 
       console.log('Uploading to materials bucket:', filePath);
 
-      // Upload to materials bucket
       const { data, error } = await supabase.storage
         .from('materials')
         .upload(filePath, blob, {
           contentType: file.mimeType || 'application/octet-stream',
-          upsert: false
+          upsert: false,
         });
 
       if (error) {
@@ -107,22 +170,17 @@ export default function CreateMaterial() {
         throw new Error(`Upload failed: ${error.message}`);
       }
 
-      console.log('Upload successful:', data);
-
-      // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('materials')
         .getPublicUrl(filePath);
 
-      console.log('Generated public URL:', publicUrl);
-
       setUploadedFile({
-        name: file.name,
-        size: file.size,
+        name: file.name || fileName,
+        size: file.size || blob.size,
         type: file.mimeType,
         url: publicUrl,
         path: filePath,
-        bucket: 'materials'
+        bucket: 'materials',
       });
 
       showSuccess('File uploaded successfully!');
@@ -134,33 +192,37 @@ export default function CreateMaterial() {
 
   const handleSave = async () => {
     if (!formData.title.trim()) {
-      Alert.alert('Error', 'Please enter a title');
-      return;
-    }
-
-    if (!user?.school_id) {
-      Alert.alert('Error', 'No school assigned to user');
+      Alert.alert('Required Field', 'Please enter a title for the material');
       return;
     }
 
     setSaving(true);
     try {
+      const materialType = uploadedFile?.type?.includes('video')
+        ? 'video'
+        : uploadedFile?.type?.includes('image')
+        ? 'image'
+        : uploadedFile?.type?.includes('audio')
+        ? 'audio'
+        : 'document';
+
       const materialData = {
-        title: formData.title,
-        description: formData.description,
-        subject: formData.subject,
-        grade_level: formData.grade_level || null,
-        school_id: user.school_id,
+        title: formData.title.trim(),
+        description: formData.description.trim() || null,
+        subject: formData.subject || 'Physics',
+        school_id: selectedSchoolId || null,
         uploaded_by: user.id,
+        teacher_id: user.role === 'teacher' ? user.id : null,
         file_path: uploadedFile?.path || null,
         file_url: uploadedFile?.url || null,
         file_name: uploadedFile?.name || null,
         file_size: uploadedFile?.size || null,
-        material_type: uploadedFile?.type?.includes('video') ? 'video' : 
-                      uploadedFile?.type?.includes('image') ? 'image' : 'document',
+        file_type: uploadedFile?.type || null,
+        material_type: materialType,
         is_published: true,
-        is_downloadable: true,
       };
+
+      console.log('Inserting material:', materialData);
 
       const { data, error } = await supabase
         .from('study_materials')
@@ -168,10 +230,13 @@ export default function CreateMaterial() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Save error from supabase:', error);
+        throw error;
+      }
 
-      showSuccess('Material created successfully!');
-      router.back();
+      showSuccess('Material created and posted successfully!');
+      handleBack();
     } catch (error) {
       console.error('Save error:', error);
       handleError(error, 'Failed to create material');
@@ -184,105 +249,151 @@ export default function CreateMaterial() {
     setUploadedFile(null);
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/materials-list');
+    }
   };
 
   if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Text>Loading...</Text>
-        </View>
-      </SafeAreaView>
-    );
+    return <LoadingSpinner />;
   }
+
+  const isAdmin = user?.role === 'admin';
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Material</Text>
-        <View style={{ width: 24 }} />
+        <Text style={styles.headerTitle}>Add Material</Text>
+        <View style={{ width: 32 }} />
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* School Selector */}
+        <View style={styles.sectionBox}>
+          <Text style={styles.sectionLabel}>
+            {isAdmin ? 'Select School (Admin):' : 'Select Assigned School:'}
+          </Text>
+          <Text style={styles.sectionSublabel}>
+            {isAdmin 
+              ? 'Choose which school receives this material, or select All Schools'
+              : 'Choose which of your assigned schools can view this material'}
+          </Text>
+
+          <View style={styles.schoolsGrid}>
+            {isAdmin && (
+              <TouchableOpacity
+                style={[
+                  styles.schoolChip,
+                  selectedSchoolId === null && styles.schoolChipActive,
+                ]}
+                onPress={() => setSelectedSchoolId(null)}
+              >
+                <Ionicons 
+                  name="globe-outline" 
+                  size={16} 
+                  color={selectedSchoolId === null ? Colors.text.inverse : Colors.primary} 
+                />
+                <Text style={[
+                  styles.schoolChipText,
+                  selectedSchoolId === null && styles.schoolChipTextActive,
+                ]}>
+                  All Schools (Global)
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {schools.map((school) => {
+              const isSelected = selectedSchoolId === school.id;
+              return (
+                <TouchableOpacity
+                  key={school.id}
+                  style={[styles.schoolChip, isSelected && styles.schoolChipActive]}
+                  onPress={() => setSelectedSchoolId(school.id)}
+                >
+                  <Ionicons 
+                    name="school-outline" 
+                    size={16} 
+                    color={isSelected ? Colors.text.inverse : Colors.primary} 
+                  />
+                  <Text style={[
+                    styles.schoolChipText,
+                    isSelected && styles.schoolChipTextActive,
+                  ]}>
+                    {school.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Title */}
         <Input
           label="Title *"
           value={formData.title}
           onChangeText={(value) => setFormData(prev => ({ ...prev, title: value }))}
-          placeholder="Enter material title"
+          placeholder="e.g., Electromagnetic Waves Chapter 3"
         />
 
+        {/* Description */}
         <Input
           label="Description"
           value={formData.description}
           onChangeText={(value) => setFormData(prev => ({ ...prev, description: value }))}
-          placeholder="Enter material description"
+          placeholder="Summary, notes, or instructions for students..."
           multiline
-          numberOfLines={4}
-          style={styles.textArea}
+          numberOfLines={3}
         />
-
-        <Input
-          label="Grade Level"
-          value={formData.grade_level}
-          onChangeText={(value) => setFormData(prev => ({ ...prev, grade_level: value }))}
-          placeholder="e.g., Grade 9, Grade 10"
-        />
-
+        {/* File Upload Section */}
         <View style={styles.uploadSection}>
-          <Text style={styles.sectionTitle}>Upload File</Text>
+          <Text style={styles.uploadLabel}>Material File (PDF, Video, Images, Docs)</Text>
           
-          {!uploadedFile ? (
+          {uploadedFile ? (
+            <View style={styles.uploadedFileCard}>
+              <View style={styles.fileIconBox}>
+                <Ionicons name="document-text" size={24} color={Colors.primary} />
+              </View>
+              <View style={styles.fileDetails}>
+                <Text style={styles.fileName} numberOfLines={1}>{uploadedFile.name}</Text>
+                <Text style={styles.fileSize}>{formatFileSize(uploadedFile.size)}</Text>
+              </View>
+              <TouchableOpacity onPress={removeFile} style={styles.removeFileBtn}>
+                <Ionicons name="trash-outline" size={20} color={Colors.error} />
+              </TouchableOpacity>
+            </View>
+          ) : (
             <TouchableOpacity 
-              style={styles.uploadButton} 
+              style={styles.dropZone} 
               onPress={pickFile}
               disabled={uploading}
             >
               <Ionicons 
-                name={uploading ? "hourglass" : "cloud-upload"} 
-                size={32} 
+                name={uploading ? "cloud-upload" : "cloud-upload-outline"} 
+                size={40} 
                 color={Colors.primary} 
               />
-              <Text style={styles.uploadText}>
-                {uploading ? 'Uploading...' : 'Tap to select file'}
+              <Text style={styles.dropZoneText}>
+                {uploading ? 'Uploading File...' : 'Tap to Pick & Upload File'}
               </Text>
-              <Text style={styles.uploadSubtext}>
-                PDF, Images, Videos, Documents up to 50MB
+              <Text style={styles.dropZoneSubtext}>
+                Supports PDF, Word, PowerPoint, MP4 videos, and images up to 100MB
               </Text>
             </TouchableOpacity>
-          ) : (
-            <View style={styles.uploadedFile}>
-              <View style={styles.fileInfo}>
-                <Ionicons name="document" size={24} color={Colors.primary} />
-                <View style={styles.fileDetails}>
-                  <Text style={styles.fileName}>{uploadedFile.name}</Text>
-                  <Text style={styles.fileSize}>{formatFileSize(uploadedFile.size)}</Text>
-                </View>
-                <TouchableOpacity onPress={removeFile} style={styles.removeButton}>
-                  <Ionicons name="close-circle" size={24} color={Colors.error} />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.uploadSuccess}>
-                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
-                <Text style={styles.successText}>File uploaded successfully!</Text>
-              </View>
-            </View>
           )}
         </View>
 
         <Button
-          title="Create Material"
+          title={saving ? "Saving Material..." : "Post Material"}
           onPress={handleSave}
           loading={saving}
-          style={styles.saveButton}
+          disabled={saving || uploading}
+          style={styles.submitBtn}
         />
       </ScrollView>
     </SafeAreaView>
@@ -294,22 +405,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    padding: Spacing.lg,
+    backgroundColor: Colors.card.background,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border.light,
   },
+  backBtn: {
+    padding: Spacing.xs,
+  },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: Colors.text.primary,
   },
@@ -317,59 +426,110 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: Spacing.lg,
   },
-  textArea: {
-    minHeight: 100,
-    textAlignVertical: 'top',
+  sectionBox: {
+    backgroundColor: Colors.card.background,
+    padding: Spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    marginBottom: Spacing.lg,
   },
-  uploadSection: {
-    marginVertical: Spacing.lg,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
+  sectionLabel: {
+    fontSize: 15,
+    fontWeight: '700',
     color: Colors.text.primary,
+    marginBottom: 2,
+  },
+  sectionSublabel: {
+    fontSize: 12,
+    color: Colors.text.secondary,
     marginBottom: Spacing.md,
   },
-  uploadButton: {
-    backgroundColor: Colors.card.background,
+  schoolsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  schoolChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    backgroundColor: Colors.background,
+  },
+  schoolChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  schoolChipText: {
+    fontSize: 13,
+    color: Colors.text.primary,
+    fontWeight: '500',
+  },
+  schoolChipTextActive: {
+    color: Colors.text.inverse,
+    fontWeight: '600',
+  },
+  uploadSection: {
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl,
+  },
+  uploadLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
+  },
+  dropZone: {
+    borderWidth: 2,
+    borderColor: Colors.border.medium,
+    borderStyle: 'dashed',
     borderRadius: 12,
     padding: Spacing.xl,
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: Colors.border.light,
-    borderStyle: 'dashed',
+    justifyContent: 'center',
+    backgroundColor: Colors.card.background,
   },
-  uploadText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: Colors.text.primary,
+  dropZoneText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.primary,
     marginTop: Spacing.sm,
   },
-  uploadSubtext: {
+  dropZoneSubtext: {
     fontSize: 12,
     color: Colors.text.secondary,
-    marginTop: Spacing.xs,
     textAlign: 'center',
+    marginTop: Spacing.xs,
   },
-  uploadedFile: {
-    backgroundColor: Colors.card.background,
-    borderRadius: 12,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.success,
-  },
-  fileInfo: {
+  uploadedFileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.sm,
+    backgroundColor: Colors.card.background,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    borderRadius: 10,
+    padding: Spacing.md,
+    gap: Spacing.md,
+  },
+  fileIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: Colors.primary + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   fileDetails: {
     flex: 1,
-    marginLeft: Spacing.md,
   },
   fileName: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: Colors.text.primary,
   },
   fileSize: {
@@ -377,21 +537,10 @@ const styles = StyleSheet.create({
     color: Colors.text.secondary,
     marginTop: 2,
   },
-  removeButton: {
+  removeFileBtn: {
     padding: Spacing.xs,
   },
-  uploadSuccess: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  successText: {
-    fontSize: 14,
-    color: Colors.success,
-    marginLeft: Spacing.sm,
-    fontWeight: '500',
-  },
-  saveButton: {
-    marginTop: Spacing.xl,
-    marginBottom: Spacing.xl,
+  submitBtn: {
+    marginBottom: Spacing.xxxl,
   },
 });

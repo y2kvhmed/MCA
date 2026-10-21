@@ -31,11 +31,6 @@ export default function StudentAssignmentList() {
       
       setUser(currentUser);
 
-      if (currentUser.role !== 'student') {
-        handleError(null, 'Access denied: Students only');
-        router.back();
-        return;
-      }
 
       const { data: assignmentsData, error } = await getAssignmentsForStudent(currentUser.id);
       if (error) throw error;
@@ -57,34 +52,29 @@ export default function StudentAssignmentList() {
 
   const getAssignmentStatus = (assignment: any) => {
     const hasSubmission = assignment.submissions && assignment.submissions.length > 0;
-    const submission = hasSubmission ? assignment.submissions[0] : null;
     const now = new Date();
     const dueDate = assignment.due_date ? new Date(assignment.due_date) : null;
     const isOverdue = dueDate && now > dueDate;
 
     if (hasSubmission) {
-      if (submission.grade !== null) {
-        return { status: 'graded', color: Colors.success, icon: 'checkmark-circle' };
-      }
-      return { status: 'submitted', color: Colors.info, icon: 'document' };
+      return { status: 'submitted', color: Colors.success, icon: 'checkmark-circle' };
     }
     
     if (isOverdue) {
-      return { status: 'overdue', color: Colors.error, icon: 'time' };
+      return { status: 'missing', color: Colors.error, icon: 'close-circle' };
     }
     
     if (dueDate && (dueDate.getTime() - now.getTime()) < 24 * 60 * 60 * 1000) {
       return { status: 'due_soon', color: Colors.warning, icon: 'warning' };
     }
     
-    return { status: 'pending', color: Colors.text.secondary, icon: 'document-outline' };
+    return { status: 'not_submitted', color: Colors.text.secondary, icon: 'document-outline' };
   };
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'graded': return 'Graded';
       case 'submitted': return 'Submitted';
-      case 'overdue': return 'Overdue';
+      case 'missing': return 'Missing';
       case 'due_soon': return 'Due Soon';
       default: return 'Not Submitted';
     }
@@ -97,10 +87,18 @@ export default function StudentAssignmentList() {
   const pendingAssignments = assignments.filter(a => !a.submissions || a.submissions.length === 0);
   const submittedAssignments = assignments.filter(a => a.submissions && a.submissions.length > 0);
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/student-dashboard');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <FadeInView style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack} style={{ padding: 4 }}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Assignments</Text>
@@ -118,18 +116,12 @@ export default function StudentAssignmentList() {
             <Text style={styles.statLabel}>Total</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>{pendingAssignments.length}</Text>
-            <Text style={styles.statLabel}>Pending</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{submittedAssignments.length}</Text>
+            <Text style={[styles.statValue, { color: Colors.success }]}>{submittedAssignments.length}</Text>
             <Text style={styles.statLabel}>Submitted</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>
-              {submittedAssignments.filter(a => a.submissions[0]?.grade !== null).length}
-            </Text>
-            <Text style={styles.statLabel}>Graded</Text>
+            <Text style={[styles.statValue, { color: Colors.error }]}>{pendingAssignments.length}</Text>
+            <Text style={styles.statLabel}>Missing</Text>
           </View>
         </FadeInView>
 
@@ -185,10 +177,7 @@ export default function StudentAssignmentList() {
                       </View>
                     )}
                     
-                    <View style={styles.metaItem}>
-                      <Ionicons name="trophy" size={14} color={Colors.text.secondary} />
-                      <Text style={styles.metaText}>Max: {assignment.max_score} pts</Text>
-                    </View>
+
 
                     {hasSubmission && submission.submitted_at && (
                       <View style={styles.metaItem}>
@@ -200,17 +189,7 @@ export default function StudentAssignmentList() {
                     )}
                   </View>
 
-                  {/* Grade Display */}
-                  {hasSubmission && submission.grade !== null && (
-                    <View style={styles.gradeContainer}>
-                      <Text style={styles.gradeText}>
-                        Grade: {submission.grade}/{assignment.max_score}
-                      </Text>
-                      <Text style={styles.percentageText}>
-                        ({Math.round((submission.grade / assignment.max_score) * 100)}%)
-                      </Text>
-                    </View>
-                  )}
+
 
                   {/* Action Button */}
                   <View style={styles.actionContainer}>
@@ -347,24 +326,7 @@ const styles = StyleSheet.create({
     color: Colors.text.secondary,
     marginLeft: Spacing.xs,
   },
-  gradeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.success + '10',
-    padding: Spacing.sm,
-    borderRadius: 8,
-    marginBottom: Spacing.sm,
-  },
-  gradeText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: Colors.success,
-  },
-  percentageText: {
-    fontSize: 12,
-    color: Colors.success,
-    marginLeft: Spacing.sm,
-  },
+
   actionContainer: {
     paddingTop: Spacing.sm,
     borderTopWidth: 1,

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform, Image, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { getCurrentUser } from '../../lib/auth';
-import { getEnrollmentsByStudent, getMessagesByClass, createMessage, getSchools } from '../../lib/database';
-import { formatRelativeDate, handleError, showSuccess } from '../../lib/utils';
+import { getMessagesByClass, createMessage } from '../../lib/database';
+import { formatRelativeDate, formatFileSize, handleError, showSuccess } from '../../lib/utils';
 import { notifyNewMessageToClass } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
 import AnimatedCard from '../../components/AnimatedCard';
@@ -29,8 +29,13 @@ interface ChatMessage {
     role: string;
   };
   attachments?: any[];
-  reactions?: { [emoji: string]: string[] }; // emoji -> array of user IDs
-  read_by?: string[]; // array of user IDs who read the message
+  reactions?: { [emoji: string]: string[] };
+  read_by?: string[];
+  message_type?: string;
+  file_url?: string;
+  file_path?: string;
+  file_name?: string;
+  file_size?: number;
 }
 
 export default function StudentChat() {
@@ -235,24 +240,25 @@ export default function StudentChat() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsEditing: false,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        await uploadAndSendFile(result.assets[0], 'image');
+        const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || asset.mimeType?.startsWith('video/') || asset.uri?.endsWith('.mp4');
+        await uploadAndSendFile(asset, isVideo ? 'video' : 'image');
       }
     } catch (error) {
-      handleError(error, 'Failed to pick image');
+      handleError(error, 'Failed to pick media');
     }
   };
 
   const pickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/*'],
+        type: '*/*',
         copyToCacheDirectory: true,
       });
 
@@ -264,23 +270,30 @@ export default function StudentChat() {
     }
   };
 
-  const uploadAndSendFile = async (file: any, type: 'image' | 'document') => {
+  const uploadAndSendFile = async (file: any, type: 'image' | 'video' | 'document') => {
     if (!selectedSchool || !user) return;
+
+    const MAX_CHAT_FILE_SIZE = 30 * 1024 * 1024; // 30MB strict limit
+
+    if (file.size && file.size > MAX_CHAT_FILE_SIZE) {
+      Alert.alert('File Too Large', 'Upload limit in chat is 30MB. Please choose a smaller file.');
+      return;
+    }
 
     setSending(true);
     try {
-      // Check file size (max 10MB)
-      if (file.size && file.size > 10 * 1024 * 1024) {
-        Alert.alert('Error', 'File size must be less than 10MB');
-        return;
-      }
-
       // Read file as blob
       const response = await fetch(file.uri);
       const blob = await response.blob();
+
+      if (blob.size > MAX_CHAT_FILE_SIZE) {
+        Alert.alert('File Too Large', 'Upload limit in chat is 30MB. Please choose a smaller file.');
+        return;
+      }
       
       // Create unique filename
-      const fileExt = file.name?.split('.').pop() || (type === 'image' ? 'jpg' : 'pdf');
+      const defaultExt = type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'pdf';
+      const fileExt = file.name?.split('.').pop() || defaultExt;
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
       const filePath = `chat/${selectedSchool}/${fileName}`;
 
@@ -288,7 +301,7 @@ export default function StudentChat() {
       const { data, error } = await supabase.storage
         .from('chat-files')
         .upload(filePath, blob, {
-          contentType: file.mimeType || (type === 'image' ? 'image/jpeg' : 'application/pdf'),
+          contentType: file.mimeType || (type === 'image' ? 'image/jpeg' : type === 'video' ? 'video/mp4' : 'application/octet-stream'),
           upsert: false
         });
 
@@ -301,14 +314,14 @@ export default function StudentChat() {
 
       // Send message with file attachment
       const messageData = {
-        content: type === 'image' ? '📷 Image' : `📄 ${file.name || 'Document'}`,
+        content: type === 'image' ? '[Image]' : type === 'video' ? '[Video]' : `[File] ${file.name || 'Document'}`,
         sender_id: user.id,
         school_id: selectedSchool,
         message_type: type,
         file_path: filePath,
         file_url: urlData.publicUrl,
         file_name: file.name || fileName,
-        file_size: file.size
+        file_size: file.size || blob.size
       };
 
       const { data: messageResult, error: messageError } = await supabase
@@ -489,26 +502,103 @@ export default function StudentChat() {
                   activeOpacity={0.8}
                 >
                   <AnimatedCard 
-                    style={[
-                      styles.messageCard,
-                      isMyMessage(message) ? styles.myMessage : styles.theirMessage
-                    ]}
+                    style={isMyMessage(message) 
+                      ? { ...styles.messageCard, ...styles.myMessage }
+                      : { ...styles.messageCard, ...styles.theirMessage }
+                    }
                     delay={index * 50}
                   >
                     <View style={styles.messageHeader}>
-                      <Text style={styles.senderName}>
-                        {isMyMessage(message) ? 'You' : message.sender?.name || 'Teacher'}
-                      </Text>
+                      <View style={styles.senderWithBadge}>
+                        <Text style={styles.senderName}>
+                          {isMyMessage(message) ? 'You' : message.sender?.name || (message.sender?.role === 'teacher' ? 'Teacher' : 'Student')}
+                        </Text>
+                        <View style={[
+                          styles.roleBadge,
+                          {
+                            backgroundColor: (message.sender?.role || (isMyMessage(message) ? user?.role : 'student')) === 'teacher' ? '#E0F2FE' : '#DCFCE7'
+                          }
+                        ]}>
+                          <Text style={[
+                            styles.roleBadgeText,
+                            {
+                              color: (message.sender?.role || (isMyMessage(message) ? user?.role : 'student')) === 'teacher' ? '#0369A1' : '#15803D'
+                            }
+                          ]}>
+                            {(message.sender?.role || (isMyMessage(message) ? user?.role : 'student')) === 'teacher' ? 'Teacher' : 'Student'}
+                          </Text>
+                        </View>
+                      </View>
                       <Text style={styles.messageTime}>
                         {formatRelativeDate(message.created_at)}
                       </Text>
                     </View>
-                    <Text style={[
-                      styles.messageContent,
-                      { color: isMyMessage(message) ? Colors.text.inverse : Colors.text.primary }
-                    ]}>
-                      {message.content}
-                    </Text>
+                    {/* Display image if message is an image */}
+                    {message.message_type === 'image' && message.file_url && (
+                      <TouchableOpacity onPress={() => message.file_url && Linking.openURL(message.file_url)}>
+                        <Image 
+                          source={{ uri: message.file_url }} 
+                          style={styles.messageImage}
+                          resizeMode="cover"
+                        />
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Display video if message is a video */}
+                    {message.message_type === 'video' && message.file_url && (
+                      <TouchableOpacity 
+                        style={styles.fileAttachment}
+                        onPress={() => message.file_url && Linking.openURL(message.file_url)}
+                      >
+                        <View style={[styles.fileIcon, { backgroundColor: '#FEF3C7' }]}>
+                          <Ionicons name="videocam" size={24} color="#D97706" />
+                        </View>
+                        <View style={styles.fileInfo}>
+                          <Text style={styles.fileName} numberOfLines={1}>
+                            {message.file_name || 'Video attachment'}
+                          </Text>
+                          {message.file_size && (
+                            <Text style={styles.fileSize}>
+                              {formatFileSize(message.file_size)}
+                            </Text>
+                          )}
+                        </View>
+                        <Ionicons name="play-circle" size={24} color={Colors.primary} />
+                      </TouchableOpacity>
+                    )}
+                    
+                    {/* Display file attachment if message is a document */}
+                    {message.message_type === 'document' && message.file_url && (
+                      <TouchableOpacity 
+                        style={styles.fileAttachment}
+                        onPress={() => message.file_url && Linking.openURL(message.file_url)}
+                      >
+                        <View style={styles.fileIcon}>
+                          <Ionicons name="document" size={24} color={Colors.primary} />
+                        </View>
+                        <View style={styles.fileInfo}>
+                          <Text style={styles.fileName} numberOfLines={1}>
+                            {message.file_name || 'Document'}
+                          </Text>
+                          {message.file_size && (
+                            <Text style={styles.fileSize}>
+                              {formatFileSize(message.file_size)}
+                            </Text>
+                          )}
+                        </View>
+                        <Ionicons name="download-outline" size={20} color={Colors.primary} />
+                      </TouchableOpacity>
+                    )}
+                    
+                    {/* Display text content only if not just an attachment indicator */}
+                    {message.content && !message.content.startsWith('[Image]') && !message.content.startsWith('[Video]') && !message.content.startsWith('[File]') && !message.content.startsWith('📷') && !message.content.startsWith('🎥') && !message.content.startsWith('📄') && (
+                      <Text style={[
+                        styles.messageContent,
+                        { color: isMyMessage(message) ? Colors.text.inverse : Colors.text.primary }
+                      ]}>
+                        {message.content}
+                      </Text>
+                    )}
 
                     {/* Read Receipt */}
                     {isMyMessage(message) && (
@@ -520,59 +610,57 @@ export default function StudentChat() {
                         />
                       </View>
                     )}
-
-                    {message.sender?.role && (
-                      <View style={[
-                        styles.roleBadge,
-                        { backgroundColor: message.sender.role === 'teacher' ? Colors.info : Colors.success }
-                      ]}>
-                        <Text style={styles.roleBadgeText}>
-                          {message.sender.role.toUpperCase()}
-                        </Text>
-                      </View>
-                    )}
                   </AnimatedCard>
                 </TouchableOpacity>
               ))
             )}
           </ScrollView>
 
-          {/* Message Input */}
-          <View style={styles.inputContainer}>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={styles.messageInput}
-                value={newMessage}
-                onChangeText={setNewMessage}
-                placeholder="Type your message..."
-                multiline
-                maxLength={500}
-              />
-              <TouchableOpacity 
-                style={styles.attachButton}
-                onPress={pickImage}
-              >
-                <Ionicons name="image" size={20} color={Colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.attachButton}
-                onPress={pickDocument}
-              >
-                <Ionicons name="document" size={20} color={Colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.sendButton, (!newMessage.trim() || sending) && styles.sendButtonDisabled]}
-                onPress={sendMessage}
-                disabled={!newMessage.trim() || sending}
-              >
-                <Ionicons 
-                  name={sending ? "hourglass" : "send"} 
-                  size={20} 
-                  color={Colors.text.inverse} 
-                />
-              </TouchableOpacity>
+          {/* Admin Read Only Banner vs Message Input */}
+          {user?.role === 'admin' ? (
+            <View style={styles.adminReadOnlyContainer}>
+              <Ionicons name="eye" size={20} color={Colors.info} />
+              <Text style={styles.adminReadOnlyText}>
+                Admin View Only: You can monitor this chat, but typing is disabled.
+              </Text>
             </View>
-          </View>
+          ) : (
+            <View style={styles.inputContainer}>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.messageInput}
+                  value={newMessage}
+                  onChangeText={setNewMessage}
+                  placeholder="Type your message..."
+                  multiline
+                  maxLength={500}
+                />
+                <TouchableOpacity 
+                  style={styles.attachButton}
+                  onPress={pickImage}
+                >
+                  <Ionicons name="image" size={20} color={Colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.attachButton}
+                  onPress={pickDocument}
+                >
+                  <Ionicons name="document" size={20} color={Colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.sendButton, (!newMessage.trim() || sending) && styles.sendButtonDisabled]}
+                  onPress={sendMessage}
+                  disabled={!newMessage.trim() || sending}
+                >
+                  <Ionicons 
+                    name={sending ? "hourglass" : "send"} 
+                    size={20} 
+                    color={Colors.text.inverse} 
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </KeyboardAvoidingView>
       )}
 
@@ -655,8 +743,13 @@ const styles = StyleSheet.create({
   messageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: Spacing.sm,
+  },
+  senderWithBadge: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 2,
   },
   senderName: {
     fontSize: 12,
@@ -666,6 +759,7 @@ const styles = StyleSheet.create({
   messageTime: {
     fontSize: 10,
     color: Colors.text.tertiary,
+    marginTop: 2,
   },
   messageContent: {
     fontSize: 14,
@@ -675,8 +769,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: Spacing.sm,
     paddingVertical: 2,
-    borderRadius: 10,
-    marginTop: Spacing.sm,
+    borderRadius: 8,
+    marginTop: 2,
   },
   roleBadgeText: {
     fontSize: 10,
@@ -783,5 +877,56 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.text.secondary,
     fontStyle: 'italic',
+  },
+  messageImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+    marginBottom: Spacing.sm,
+  },
+  fileAttachment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    padding: Spacing.md,
+    borderRadius: 8,
+    marginBottom: Spacing.sm,
+  },
+  fileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: Colors.primary + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  fileInfo: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.text.primary,
+  },
+  fileSize: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginTop: 2,
+  },
+  adminReadOnlyContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    backgroundColor: Colors.card.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border.light,
+    gap: 8,
+  },
+  adminReadOnlyText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.info,
   },
 });

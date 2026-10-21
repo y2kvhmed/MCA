@@ -97,19 +97,20 @@ export default function DragDropUpload({
   const processFiles = (files: any[]) => {
     const validFiles = files.filter((file) => {
       // Check file type
+      const fileType = file.type || file.mimeType || '';
       const isValidType = acceptedTypes.some(type => {
         if (type.includes('*')) {
           const baseType = type.split('/')[0];
-          return file.type.startsWith(baseType);
+          return fileType.startsWith(baseType);
         }
-        return file.type === type;
+        return fileType === type;
       });
 
       // Check file size
       const isValidSize = file.size <= maxSizeMB * 1024 * 1024;
 
       if (!isValidType) {
-        console.warn(`File ${file.name} has unsupported type: ${file.type}`);
+        console.warn(`File ${file.name} has unsupported type: ${fileType}`);
       }
       if (!isValidSize) {
         console.warn(`File ${file.name} is too large: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
@@ -160,16 +161,17 @@ export default function DragDropUpload({
   };
 
   const getFileIcon = (file: any): string => {
-    if (!file.type) return 'document-outline';
+    const fileType = file.type || file.mimeType || '';
+    if (!fileType) return 'document-outline';
     
-    if (file.type.startsWith('image/')) return 'image-outline';
-    if (file.type.startsWith('video/')) return 'videocam-outline';
-    if (file.type.startsWith('audio/')) return 'musical-notes-outline';
-    if (file.type.includes('pdf')) return 'document-text-outline';
-    if (file.type.includes('word') || file.type.includes('document')) return 'document-outline';
-    if (file.type.includes('spreadsheet') || file.type.includes('excel')) return 'grid-outline';
-    if (file.type.includes('presentation') || file.type.includes('powerpoint')) return 'easel-outline';
-    if (file.type.includes('zip') || file.type.includes('rar')) return 'archive-outline';
+    if (fileType.startsWith('image/')) return 'image-outline';
+    if (fileType.startsWith('video/')) return 'videocam-outline';
+    if (fileType.startsWith('audio/')) return 'musical-notes-outline';
+    if (fileType.includes('pdf')) return 'document-text-outline';
+    if (fileType.includes('word') || fileType.includes('document')) return 'document-outline';
+    if (fileType.includes('spreadsheet') || fileType.includes('excel')) return 'grid-outline';
+    if (fileType.includes('presentation') || fileType.includes('powerpoint')) return 'easel-outline';
+    if (fileType.includes('zip') || fileType.includes('rar')) return 'archive-outline';
     
     return 'document-outline';
   };
@@ -222,7 +224,7 @@ export default function DragDropUpload({
             <Ionicons
               name={isUploading ? "hourglass" : isDragOver ? "cloud-done" : "cloud-upload"}
               size={48}
-              color={isDragOver ? Colors.success : disabled ? Colors.text.disabled : Colors.primary}
+              color={isDragOver ? Colors.success : disabled ? Colors.text.tertiary : Colors.primary}
             />
           </View>
           
@@ -340,7 +342,7 @@ const styles = StyleSheet.create({
     color: Colors.success,
   },
   disabledText: {
-    color: Colors.text.disabled,
+    color: Colors.text.tertiary,
   },
   subtitle: {
     fontSize: 14,

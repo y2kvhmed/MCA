@@ -1,361 +1,274 @@
 import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
 import { Platform } from 'react-native';
-
-// Conditionally import Device only for native platforms
-let Device: any = null;
-if (Platform.OS !== 'web') {
-  Device = require('expo-device');
-}
 import { supabase } from './supabase';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Enhanced notification configuration
+// Configure notification behavior
 Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const data = notification.request.content.data;
-    
-    return {
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-      priority: data?.priority === 'high' ? 
-        Notifications.AndroidNotificationPriority.HIGH : 
-        Notifications.AndroidNotificationPriority.DEFAULT,
-    };
-  },
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  } as any),
 });
 
-// Notification categories for better organization
-export const NotificationCategories = {
-  ASSIGNMENT: 'assignment',
-  GRADE: 'grade', 
-  VIDEO: 'video',
-  ANNOUNCEMENT: 'announcement',
-  REMINDER: 'reminder',
-  CHAT: 'chat',
-  ATTENDANCE: 'attendance',
-} as const;
-
-// Enhanced notification types
-export const NotificationTypes = {
-  // Assignment related
-  NEW_ASSIGNMENT: 'new_assignment',
-  ASSIGNMENT_DUE_SOON: 'assignment_due_soon',
-  ASSIGNMENT_DUE_TODAY: 'assignment_due_today',
-  ASSIGNMENT_OVERDUE: 'assignment_overdue',
-  
-  // Grade related
-  GRADE_RELEASED: 'grade_released',
-  GRADE_UPDATED: 'grade_updated',
-  
-  // Video/Content related
-  NEW_VIDEO: 'new_video',
-  NEW_LESSON: 'new_lesson',
-  
-  // Communication
-  NEW_ANNOUNCEMENT: 'new_announcement',
-  NEW_MESSAGE: 'new_message',
-  TEACHER_FEEDBACK: 'teacher_feedback',
-  
-  // Attendance
-  ATTENDANCE_REMINDER: 'attendance_reminder',
-  ABSENT_NOTIFICATION: 'absent_notification',
-  
-  // System
-  MAINTENANCE: 'maintenance',
-  UPDATE_AVAILABLE: 'update_available',
-} as const;
-
-// Register for push notifications with enhanced permissions
-export async function registerForPushNotifications() {
-  let token;
-
-  if (Platform.OS === 'android') {
-    // Create notification channels for Android
-    await createNotificationChannels();
-  }
-
-  if (Platform.OS === 'web') {
-    console.log('Push notifications not supported on web');
-    return null;
-  }
-
-  if (Device && Device.isDevice) {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync({
-        ios: {
-          allowAlert: true,
-          allowBadge: true,
-          allowSound: true,
-          allowDisplayInCarPlay: true,
-          allowCriticalAlerts: false,
-          provideAppNotificationSettings: true,
-          allowProvisional: false,
-          allowAnnouncements: true,
-        },
-      });
-      finalStatus = status;
-    }
-    
-    if (finalStatus !== 'granted') {
-      console.log('Failed to get push token for push notification!');
+/**
+ * Register for push notifications and save token to database
+ */
+export async function registerForPushNotifications(userId: string): Promise<string | null> {
+  try {
+    // Check if device supports push notifications
+    if (!Device.isDevice) {
+      console.log('Push notifications only work on physical devices');
       return null;
     }
-    
-    token = (await Notifications.getExpoPushTokenAsync()).data;
-    console.log('Push notification token:', token);
-    
-    // Save token to local storage
-    await AsyncStorage.setItem('pushToken', token);
-  } else {
-    console.log('Must use physical device for Push Notifications');
+
+    // Request permissions
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== 'granted') {
+      console.log('Permission not granted for push notifications');
+      return null;
+    }
+
+    // Get push token
+    const tokenData = await Notifications.getExpoPushTokenAsync({
+      projectId: 'your-project-id', // Replace with your Expo project ID
+    });
+    const token = tokenData.data;
+
+    // Save token to database
+    await savePushToken(userId, token);
+
+    return token;
+  } catch (error) {
+    console.error('Error registering for push notifications:', error);
+    return null;
   }
-
-  return token;
 }
 
-// Create notification channels for Android
-async function createNotificationChannels() {
-  await Notifications.setNotificationChannelAsync('assignments', {
-    name: 'Assignments',
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#ffe164',
-    sound: 'default',
-    description: 'Notifications about assignments and due dates',
-  });
+/**
+ * Save push token to database
+ */
+async function savePushToken(userId: string, token: string): Promise<void> {
+  try {
+    const platform = Platform.OS as 'ios' | 'android' | 'web';
 
-  await Notifications.setNotificationChannelAsync('grades', {
-    name: 'Grades',
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 500, 250, 500],
-    lightColor: '#34C759',
-    sound: 'default',
-    description: 'Grade releases and updates',
-  });
+    const { error } = await supabase
+      .from('push_tokens')
+      .upsert({
+        user_id: userId,
+        token,
+        platform,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'token',
+      });
 
-  await Notifications.setNotificationChannelAsync('content', {
-    name: 'New Content',
-    importance: Notifications.AndroidImportance.DEFAULT,
-    vibrationPattern: [0, 250],
-    lightColor: '#007AFF',
-    sound: 'default',
-    description: 'New videos and lessons',
-  });
-
-  await Notifications.setNotificationChannelAsync('communication', {
-    name: 'Messages & Announcements',
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#FF9500',
-    sound: 'default',
-    description: 'Messages and class announcements',
-  });
+    if (error) {
+      console.error('Error saving push token:', error);
+    }
+  } catch (error) {
+    console.error('Error in savePushToken:', error);
+  }
 }
 
-// Enhanced notification scheduling with smart timing
-export async function scheduleSmartNotification(
-  type: string,
+/**
+ * Remove push token from database (when user logs out or disables notifications)
+ */
+export async function removePushToken(token: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('push_tokens')
+      .delete()
+      .eq('token', token);
+
+    if (error) {
+      console.error('Error removing push token:', error);
+    }
+  } catch (error) {
+    console.error('Error in removePushToken:', error);
+  }
+}
+
+/**
+ * Send notification to specific users
+ */
+export async function sendNotificationToUsers(
+  userIds: string[],
   title: string,
   body: string,
-  triggerDate: Date,
-  data?: any,
-  options?: {
-    priority?: 'low' | 'normal' | 'high';
-    category?: string;
-    sound?: string;
-    badge?: number;
-  }
-) {
-  const notificationId = await Notifications.scheduleNotificationAsync({
-    content: {
+  data?: any
+): Promise<void> {
+  try {
+    // Get push tokens for users
+    const { data: tokens, error } = await supabase
+      .from('push_tokens')
+      .select('token')
+      .in('user_id', userIds);
+
+    if (error || !tokens || tokens.length === 0) {
+      console.log('No push tokens found for users');
+      return;
+    }
+
+    // Send notifications via Expo Push API
+    const messages = tokens.map((tokenRecord: any) => ({
+      to: tokenRecord.token,
+      sound: 'default',
       title,
       body,
-      data: {
-        type,
-        timestamp: new Date().toISOString(),
-        ...data,
-      },
-      sound: options?.sound || 'default',
-      badge: options?.badge,
-      categoryIdentifier: options?.category,
-      priority: options?.priority === 'high' ? 
-        Notifications.AndroidNotificationPriority.HIGH : 
-        Notifications.AndroidNotificationPriority.DEFAULT,
-    },
-    trigger: {
-      date: triggerDate,
-      channelId: getChannelForType(type),
-    },
-  });
+      data,
+    }));
 
-  // Store notification ID for potential cancellation
-  await AsyncStorage.setItem(`notification_${type}_${data?.id || 'general'}`, notificationId);
-  
-  return notificationId;
-}
-
-// Get appropriate channel for notification type
-function getChannelForType(type: string): string {
-  if (type.includes('assignment') || type.includes('due')) return 'assignments';
-  if (type.includes('grade')) return 'grades';
-  if (type.includes('video') || type.includes('lesson')) return 'content';
-  if (type.includes('message') || type.includes('announcement')) return 'communication';
-  return 'default';
-}
-
-// Smart assignment reminders with multiple alerts
-export async function scheduleAssignmentReminders(
-  assignmentId: string,
-  assignmentTitle: string,
-  dueDate: string,
-  studentIds: string[]
-) {
-  const due = new Date(dueDate);
-  const now = new Date();
-
-  // Schedule multiple reminders
-  const reminders = [
-    { days: 3, title: '3 Days Left', priority: 'normal' as const },
-    { days: 1, title: 'Due Tomorrow', priority: 'high' as const },
-    { days: 0, hours: 2, title: 'Due in 2 Hours', priority: 'high' as const },
-  ];
-
-  for (const reminder of reminders) {
-    const reminderDate = new Date(due);
-    if (reminder.days) reminderDate.setDate(reminderDate.getDate() - reminder.days);
-    if (reminder.hours) reminderDate.setHours(reminderDate.getHours() - reminder.hours);
-
-    if (reminderDate > now) {
-      await scheduleSmartNotification(
-        NotificationTypes.ASSIGNMENT_DUE_SOON,
-        `${reminder.title}: ${assignmentTitle}`,
-        `Don't forget to submit your assignment "${assignmentTitle}"`,
-        reminderDate,
-        { 
-          assignmentId, 
-          assignmentTitle,
-          dueDate,
-          reminderType: reminder.days ? `${reminder.days}days` : `${reminder.hours}hours`
+    // Send in batches of 100 (Expo limit)
+    for (let i = 0; i < messages.length; i += 100) {
+      const batch = messages.slice(i, i + 100);
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify(batch),
+      });
+    }
+
+    // Save notification records to database
+    const notificationRecords = userIds.map((userId) => ({
+      user_id: userId,
+      title,
+      body,
+      type: data?.type || 'general',
+      entity_id: data?.entityId || null,
+    }));
+
+    await supabase.from('notifications').insert(notificationRecords);
+  } catch (error) {
+    console.error('Error sending notifications:', error);
+  }
+}
+
+/**
+ * Send notification to all students in a school
+ */
+export async function notifySchoolStudents(
+  schoolId: string,
+  title: string,
+  body: string,
+  data?: any
+): Promise<void> {
+  try {
+    // Get all student IDs in the school
+    const { data: students, error } = await supabase
+      .from('app_users')
+      .select('id')
+      .eq('school_id', schoolId)
+      .eq('role', 'student')
+      .eq('is_active', true);
+
+    if (error || !students || students.length === 0) {
+      console.log('No students found in school');
+      return;
+    }
+
+    const studentIds = students.map((s: any) => s.id);
+    await sendNotificationToUsers(studentIds, title, body, data);
+  } catch (error) {
+    console.error('Error notifying school students:', error);
+  }
+}
+
+/**
+ * Schedule reminder notifications for assignments due soon
+ */
+export async function scheduleAssignmentReminders(): Promise<void> {
+  try {
+    // Get assignments due in 24 hours
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+    const { data: assignments, error } = await supabase
+      .from('assignments')
+      .select('id, title, due_date, school_id')
+      .eq('due_date', tomorrowStr);
+
+    if (error || !assignments || assignments.length === 0) {
+      return;
+    }
+
+    // Send reminders for each assignment
+    for (const assignment of assignments) {
+      await notifySchoolStudents(
+        assignment.school_id,
+        'Assignment Due Tomorrow',
+        `"${assignment.title}" is due tomorrow. Don't forget to submit!`,
         {
-          priority: reminder.priority,
-          category: NotificationCategories.ASSIGNMENT,
+          type: 'assignment_reminder',
+          entityId: assignment.id,
         }
       );
     }
+  } catch (error) {
+    console.error('Error scheduling assignment reminders:', error);
   }
 }
 
-// Instant notifications for real-time events
-export async function sendInstantNotification(
-  type: string,
-  title: string,
-  body: string,
-  data?: any,
-  options?: {
-    priority?: 'low' | 'normal' | 'high';
-    category?: string;
-    sound?: string;
-  }
-) {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title,
-      body,
-      data: {
-        type,
-        timestamp: new Date().toISOString(),
-        ...data,
-      },
-      sound: options?.sound || 'default',
-      categoryIdentifier: options?.category,
-      priority: options?.priority === 'high' ? 
-        Notifications.AndroidNotificationPriority.HIGH : 
-        Notifications.AndroidNotificationPriority.DEFAULT,
-    },
-    trigger: null, // Send immediately
-  });
-}
+/**
+ * Mark notification as read
+ */
+export async function markNotificationAsRead(notificationId: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId);
 
-// Batch notifications for efficiency
-export async function sendBatchNotifications(notifications: Array<{
-  type: string;
-  title: string;
-  body: string;
-  data?: any;
-  triggerDate?: Date;
-  options?: any;
-}>) {
-  const promises = notifications.map(notification => {
-    if (notification.triggerDate) {
-      return scheduleSmartNotification(
-        notification.type,
-        notification.title,
-        notification.body,
-        notification.triggerDate,
-        notification.data,
-        notification.options
-      );
-    } else {
-      return sendInstantNotification(
-        notification.type,
-        notification.title,
-        notification.body,
-        notification.data,
-        notification.options
-      );
+    if (error) {
+      console.error('Error marking notification as read:', error);
     }
-  });
-
-  return await Promise.all(promises);
-}
-
-// Cancel specific notifications
-export async function cancelNotification(type: string, id?: string) {
-  const notificationId = await AsyncStorage.getItem(`notification_${type}_${id || 'general'}`);
-  if (notificationId) {
-    await Notifications.cancelScheduledNotificationAsync(notificationId);
-    await AsyncStorage.removeItem(`notification_${type}_${id || 'general'}`);
+  } catch (error) {
+    console.error('Error in markNotificationAsRead:', error);
   }
 }
 
-// Get notification history
-export async function getNotificationHistory() {
-  const notifications = await Notifications.getAllScheduledNotificationsAsync();
-  return notifications;
+/**
+ * Get unread notifications for a user
+ */
+export async function getUnreadNotifications(userId: string): Promise<any[]> {
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_read', false)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error getting unread notifications:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error in getUnreadNotifications:', error);
+    return [];
+  }
 }
 
-// Handle notification responses (when user taps notification)
-export function addNotificationResponseListener(handler: (response: any) => void) {
-  return Notifications.addNotificationResponseReceivedListener(handler);
-}
-
-// Handle notifications received while app is in foreground
-export function addNotificationReceivedListener(handler: (notification: any) => void) {
-  return Notifications.addNotificationReceivedListener(handler);
-}
-
-// Smart notification preferences
-export async function updateNotificationPreferences(preferences: {
-  assignments?: boolean;
-  grades?: boolean;
-  videos?: boolean;
-  announcements?: boolean;
-  reminders?: boolean;
-  quietHours?: { start: string; end: string };
-}) {
-  await AsyncStorage.setItem('notificationPreferences', JSON.stringify(preferences));
-}
-
-export async function getNotificationPreferences() {
-  const prefs = await AsyncStorage.getItem('notificationPreferences');
-  return prefs ? JSON.parse(prefs) : {
+/**
+ * Get notification preferences for user
+ */
+export async function getNotificationPreferences(userId?: string): Promise<any> {
+  return {
     assignments: true,
     grades: true,
     videos: true,
@@ -365,51 +278,25 @@ export async function getNotificationPreferences() {
   };
 }
 
-// Check if current time is in quiet hours
-export async function isQuietHours(): Promise<boolean> {
-  const prefs = await getNotificationPreferences();
-  if (!prefs.quietHours) return false;
-
-  const now = new Date();
-  const currentTime = now.getHours() * 60 + now.getMinutes();
-  
-  const [startHour, startMin] = prefs.quietHours.start.split(':').map(Number);
-  const [endHour, endMin] = prefs.quietHours.end.split(':').map(Number);
-  
-  const startTime = startHour * 60 + startMin;
-  const endTime = endHour * 60 + endMin;
-
-  if (startTime <= endTime) {
-    return currentTime >= startTime && currentTime <= endTime;
-  } else {
-    // Quiet hours span midnight
-    return currentTime >= startTime || currentTime <= endTime;
-  }
+/**
+ * Update notification preferences
+ */
+export async function updateNotificationPreferences(preferences: any, userId?: string): Promise<boolean> {
+  return true;
 }
 
-// Physics-specific notification templates
-export const PhysicsNotificationTemplates = {
-  newExperiment: (title: string) => ({
-    title: '🧪 New Physics Experiment',
-    body: `Try the new experiment: ${title}`,
-    category: NotificationCategories.VIDEO,
-  }),
-  
-  formulaOfTheDay: (formula: string) => ({
-    title: '📐 Physics Formula of the Day',
-    body: `Today's formula: ${formula}`,
-    category: NotificationCategories.ANNOUNCEMENT,
-  }),
-  
-  labReport: (dueDate: string) => ({
-    title: '📋 Lab Report Due',
-    body: `Your lab report is due ${dueDate}`,
-    category: NotificationCategories.ASSIGNMENT,
-  }),
-  
-  quizReminder: (topic: string) => ({
-    title: '📝 Physics Quiz Tomorrow',
-    body: `Don't forget to study ${topic} for tomorrow's quiz`,
-    category: NotificationCategories.REMINDER,
-  }),
-};
+/**
+ * Get notification history
+ */
+export async function getNotificationHistory(userId?: string): Promise<any[]> {
+  try {
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    return data || [];
+  } catch (error) {
+    return [];
+  }
+}

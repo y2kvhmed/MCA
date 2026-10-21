@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { handleError, showSuccess, validateEmail, validatePhone } from '../lib/utils';
+import { handleError, showSuccess, isValidEmail, isValidPhone } from '../lib/utils';
 import Card from '../components/Card';
 import Input from '../components/Input';
 import Button from '../components/Button';
@@ -22,17 +22,14 @@ export default function StudentProfileManagement() {
     name: '',
     email: '',
     phone: '',
-    parent_phone: '',
     emergency_contact: '',
     address: '',
     date_of_birth: '',
-    grade_level: '',
   });
   const [stats, setStats] = useState({
     totalClasses: 0,
     totalAssignments: 0,
     averageGrade: 0,
-
   });
 
   useEffect(() => {
@@ -42,6 +39,10 @@ export default function StudentProfileManagement() {
   const loadData = async () => {
     try {
       const currentUser = await getCurrentUser();
+      if (!currentUser) {
+        router.replace('/login');
+        return;
+      }
       setUser(currentUser);
 
       // Load user profile data
@@ -57,11 +58,9 @@ export default function StudentProfileManagement() {
         name: userData.name || '',
         email: userData.email || '',
         phone: userData.phone || '',
-        parent_phone: userData.parent_phone || '',
         emergency_contact: userData.emergency_contact || '',
         address: userData.address || '',
         date_of_birth: userData.date_of_birth || '',
-        grade_level: userData.grade_level || '',
       });
 
       // Load student statistics
@@ -125,18 +124,13 @@ export default function StudentProfileManagement() {
       return false;
     }
 
-    if (!validateEmail(formData.email)) {
+    if (!isValidEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email address');
       return false;
     }
 
-    if (formData.phone && !validatePhone(formData.phone)) {
+    if (formData.phone && !isValidPhone(formData.phone)) {
       Alert.alert('Error', 'Please enter a valid phone number');
-      return false;
-    }
-
-    if (formData.parent_phone && !validatePhone(formData.parent_phone)) {
-      Alert.alert('Error', 'Please enter a valid parent phone number');
       return false;
     }
 
@@ -154,11 +148,9 @@ export default function StudentProfileManagement() {
           name: formData.name.trim(),
           email: formData.email.trim().toLowerCase(),
           phone: formData.phone.trim() || null,
-          parent_phone: formData.parent_phone.trim() || null,
           emergency_contact: formData.emergency_contact.trim() || null,
           address: formData.address.trim() || null,
           date_of_birth: formData.date_of_birth || null,
-          grade_level: formData.grade_level.trim() || null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
@@ -216,7 +208,6 @@ export default function StudentProfileManagement() {
               </Text>
               <Text style={styles.statLabel}>Avg Grade</Text>
             </View>
-
           </View>
         </Card>
 
@@ -256,13 +247,6 @@ export default function StudentProfileManagement() {
           />
 
           <Input
-            label="Grade Level"
-            value={formData.grade_level}
-            onChangeText={(value) => handleInputChange('grade_level', value)}
-            placeholder="e.g., 9th Grade, Sophomore"
-          />
-
-          <Input
             label="Address"
             value={formData.address}
             onChangeText={(value) => handleInputChange('address', value)}
@@ -275,14 +259,6 @@ export default function StudentProfileManagement() {
         {/* Emergency Contact Information */}
         <Card style={styles.formCard}>
           <Text style={styles.formTitle}>Emergency Contact</Text>
-          
-          <Input
-            label="Parent/Guardian Phone"
-            value={formData.parent_phone}
-            onChangeText={(value) => handleInputChange('parent_phone', value)}
-            placeholder="Enter parent/guardian phone"
-            keyboardType="phone-pad"
-          />
 
           <Input
             label="Emergency Contact"
@@ -292,29 +268,6 @@ export default function StudentProfileManagement() {
             multiline
             numberOfLines={2}
           />
-        </Card>
-
-        {/* Quick Actions */}
-        <Card style={styles.actionsCard}>
-          <Text style={styles.actionsTitle}>Quick Actions</Text>
-          
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => router.push('/student-grades')}
-          >
-            <Ionicons name="trophy" size={20} color={Colors.primary} />
-            <Text style={styles.actionButtonText}>View My Grades</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => router.push('/(tabs)/student-dashboard')}
-          >
-            <Ionicons name="home" size={20} color={Colors.primary} />
-            <Text style={styles.actionButtonText}>Go to Dashboard</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
         </Card>
 
         <Button
@@ -400,7 +353,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: Spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: Colors.border.light,
   },
   actionButtonText: {
     flex: 1,

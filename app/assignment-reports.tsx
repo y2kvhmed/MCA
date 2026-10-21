@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getAllAssignments, getAssignmentSubmissions } from '../lib/database';
+import { supabase } from '../lib/supabase';
 import { exportAssignmentSubmissions, exportMonthlyAssignments, exportStudentPerformance, exportAllUsers } from '../lib/csvExport';
 import { handleError, showSuccess } from '../lib/utils';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -27,12 +27,18 @@ export default function AssignmentReports() {
       setUser(currentUser);
 
       if (currentUser?.role === 'admin' || currentUser?.role === 'teacher') {
-        const { data } = await getAllAssignments();
+        const { data } = await supabase
+          .from('assignments')
+          .select('*, class:classes(name)')
+          .order('due_date', { ascending: false });
         if (data) {
           // Get submissions for each assignment
           const assignmentsWithSubmissions = await Promise.all(
-            data.map(async (assignment) => {
-              const { data: submissions } = await getAssignmentSubmissions(assignment.id);
+            data.map(async (assignment: any) => {
+              const { data: submissions } = await supabase
+                .from('submissions')
+                .select('*, student:app_users(name, email)')
+                .eq('assignment_id', assignment.id);
               return {
                 ...assignment,
                 submissions: submissions || []

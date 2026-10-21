@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Image, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { getSignedUrl } from '../lib/storage';
 import { formatDueDate, formatRelativeDate, formatFileSize, handleError } from '../lib/utils';
 import AnimatedCard from '../components/AnimatedCard';
 import FadeInView from '../components/FadeInView';
@@ -18,54 +17,105 @@ export default function AssignmentDetails() {
   const router = useRouter();
   const { assignmentId } = useLocalSearchParams();
   const [assignment, setAssignment] = useState<any>(null);
-  const [submission, setSubmission] = useState<any>(null);
+  const [submission, setSubmission] = useState<any>(null); // For student
+  const [allSubmissions, setAllSubmissions] = useState<any[]>([]); // For teacher/admin
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [assignmentId]);
 
   const loadData = async () => {
     try {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
 
-      // Load assignment details
-      const { data: assignmentData, error } = await supabase
+      // Load assignment details with fallback
+      let assignmentData: any = null;
+      const { data, error } = await supabase
         .from('assignments')
         .select(`
           *,
           class:classes(id, name),
-          teacher:app_users!assignments_teacher_id_fkey(id, name)
+          teacher:app_users(id, name)
         `)
         .eq('id', assignmentId)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.warn('Assignment join query error, using fallback:', error.message);
+        const { data: fbData, error: fbError } = await supabase
+          .from('assignments')
+          .select('*')
+          .eq('id', assignmentId)
+          .single();
+        if (fbError) throw fbError;
+        assignmentData = fbData;
+      } else {
+        assignmentData = data;
+      }
       setAssignment(assignmentData);
 
-      // Load student's submission if exists
-      const { data: submissionData, error: submissionError } = await supabase
-        .from('submissions')
-        .select('*')
-        .eq('assignment_id', assignmentId)
-        .eq('student_id', currentUser.id)
-        .single();
+      if (currentUser?.role === 'student') {
+        // Load student's own submission
+        const { data: submissionData, error: submissionError } = await supabase
+          .from('submissions')
+          .select('*')
+          .eq('assignment_id', assignmentId)
+          .eq('student_id', currentUser.id)
+          .maybeSingle();
 
-      if (submissionError && submissionError.code !== 'PGRST116') {
-        throw submissionError;
-      }
-
-      if (submissionData) {
-        setSubmission(submissionData);
-        
-        // Get download URL if file exists
-        if (submissionData.file_path) {
-          const signedUrl = await getSignedUrl('submissions', submissionData.file_path);
-          setDownloadUrl(signedUrl);
+        if (submissionError && submissionError.code !== 'PGRST116') {
+          console.warn('Student submission check error:', submissionError);
         }
+
+        if (submissionData) {
+          setSubmission(submissionData);
+          if (submissionData.file_url) {
+            setDownloadUrl(submissionData.file_url);
+          } else if (submissionData.file_path) {
+            const { data: pubData } = supabase.storage.from('submissions').getPublicUrl(submissionData.file_path);
+            setDownloadUrl(pubData?.publicUrl || null);
+          }
+        }
+      } else {
+        // For teacher or admin: load all submissions with student details and avatar_url
+        let { data: subsData, error: subsError } = await supabase
+          .from('submissions')
+          .select(`
+            *,
+            student:app_users(id, name, email, avatar_url)
+          `)
+          .eq('assignment_id', assignmentId)
+          .order('submitted_at', { ascending: false });
+
+        if (subsError) {
+          console.warn('Teacher submissions join error, trying fallback:', subsError.message);
+          const { data: fbSubs } = await supabase
+            .from('submissions')
+            .select('*')
+            .eq('assignment_id', assignmentId)
+            .order('submitted_at', { ascending: false });
+          if (fbSubs) {
+            const studentIds = fbSubs.map(s => s.student_id).filter(Boolean);
+            if (studentIds.length > 0) {
+              const { data: students } = await supabase
+                .from('app_users')
+                .select('id, name, email, avatar_url')
+                .in('id', studentIds);
+              const studentMap = new Map((students || []).map(st => [st.id, st]));
+              subsData = fbSubs.map(s => ({
+                ...s,
+                student: studentMap.get(s.student_id) || { name: 'Student' }
+              }));
+            } else {
+              subsData = fbSubs;
+            }
+          }
+        }
+        setAllSubmissions(subsData || []);
       }
     } catch (error) {
       console.error('Load data error:', error);
@@ -75,21 +125,101 @@ export default function AssignmentDetails() {
     }
   };
 
-  const handleDownload = async () => {
-    if (downloadUrl) {
+  const openPdfFile = async (filePath: string | null, fileUrl?: string | null) => {
+    try {
+      let targetUrl = fileUrl;
+      if (!targetUrl && filePath) {
+        const { data } = supabase.storage.from('submissions').getPublicUrl(filePath);
+        targetUrl = data?.publicUrl;
+      }
+      if (!targetUrl && filePath) {
+        const { data } = await supabase.storage.from('submissions').createSignedUrl(filePath, 3600);
+        targetUrl = data?.signedUrl;
+      }
+
+      if (!targetUrl) {
+        Alert.alert('File Error', 'Could not retrieve file URL.');
+        return;
+      }
+
+      if (typeof window !== 'undefined') {
+        const a = document.createElement('a');
+        a.href = targetUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        await Linking.openURL(targetUrl);
+      }
+    } catch (err) {
+      console.error('Open file error:', err);
+      handleError(err, 'Failed to open PDF');
+    }
+  };
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace(user?.role === 'student' ? '/(tabs)/student-dashboard' : '/(tabs)/teacher-dashboard');
+    }
+  };
+
+  const executeDeleteAssignment = async () => {
+    try {
+      // First defensively delete comments if any exist
       try {
-        await Linking.openURL(downloadUrl);
-      } catch (error) {
-        handleError(error, 'Failed to open file');
+        await supabase.from('assignment_comments').delete().eq('assignment_id', assignment.id);
+      } catch (cErr) {
+        console.warn('Comments delete warning:', cErr);
+      }
+
+      // Then delete submissions
+      await supabase.from('submissions').delete().eq('assignment_id', assignment.id);
+
+      // Finally delete assignment
+      const { error } = await supabase.from('assignments').delete().eq('id', assignment.id);
+      if (error) throw error;
+
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined') window.alert('Assignment deleted successfully.');
+      } else {
+        Alert.alert('Success', 'Assignment deleted successfully.');
+      }
+      handleBack();
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined') window.alert(err.message || 'Failed to delete assignment');
+      } else {
+        Alert.alert('Error', err.message || 'Failed to delete assignment');
       }
     }
   };
 
-  const getGradeColor = (percentage: number) => {
-    if (percentage >= 90) return Colors.success;
-    if (percentage >= 80) return Colors.info;
-    if (percentage >= 70) return Colors.warning;
-    return Colors.error;
+  const handleDeleteAssignment = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm('Are you sure you want to delete this assignment and all associated submissions?');
+      if (confirmed) {
+        executeDeleteAssignment();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Delete Assignment',
+      'Are you sure you want to delete this assignment and all associated submissions?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: executeDeleteAssignment
+        }
+      ]
+    );
   };
 
   if (loading) {
@@ -99,23 +229,27 @@ export default function AssignmentDetails() {
   if (!assignment) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text>Assignment not found</Text>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color={Colors.primary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Assignment Not Found</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   const isOverdue = assignment.due_date && new Date() > new Date(assignment.due_date);
-  const hasSubmission = !!submission;
-  const isGraded = submission?.grade !== null;
+  const isTeacherOrAdmin = user?.role === 'teacher' || user?.role === 'admin';
 
   return (
     <SafeAreaView style={styles.container}>
       <FadeInView style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Assignment Details</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: 32 }} />
       </FadeInView>
 
       <ScrollView style={styles.content}>
@@ -142,15 +276,16 @@ export default function AssignmentDetails() {
             )}
             
             <View style={styles.metaItem}>
-              <Ionicons name="trophy" size={16} color={Colors.text.secondary} />
-              <Text style={styles.metaText}>Max Score: {assignment.max_score}</Text>
-            </View>
-            
-            <View style={styles.metaItem}>
               <Ionicons name="person" size={16} color={Colors.text.secondary} />
-              <Text style={styles.metaText}>Teacher: {assignment.teacher?.name || 'Unknown'}</Text>
+              <Text style={styles.metaText}>Teacher: {assignment.teacher?.name || 'Teacher'}</Text>
             </View>
           </View>
+
+          {assignment.description ? (
+            <View style={styles.descContainer}>
+              <Text style={styles.descText}>{assignment.description}</Text>
+            </View>
+          ) : null}
 
           {assignment.instructions && (
             <View style={styles.instructionsContainer}>
@@ -160,84 +295,155 @@ export default function AssignmentDetails() {
           )}
         </AnimatedCard>
 
-        {/* Submission Status */}
-        <AnimatedCard style={styles.statusCard} delay={200}>
-          <Text style={styles.sectionTitle}>Submission Status</Text>
-          
-          {!hasSubmission ? (
-            <View style={styles.noSubmissionContainer}>
-              <Ionicons name="document-outline" size={48} color={Colors.text.tertiary} />
-              <Text style={styles.noSubmissionText}>No submission yet</Text>
-              <Text style={styles.noSubmissionSubtext}>
-                {isOverdue ? 'This assignment is overdue' : 'Submit your work before the due date'}
-              </Text>
+        {/* TEACHER / ADMIN VIEW: Direct Submissions Section */}
+        {isTeacherOrAdmin ? (
+          <AnimatedCard style={styles.statusCard} delay={200}>
+            <View style={styles.teacherSubmissionsHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Student Submissions</Text>
+                <Text style={styles.subTitleText}>
+                  {allSubmissions.length} student{allSubmissions.length === 1 ? '' : 's'} submitted
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.viewAllSubsBtn}
+                onPress={() => router.push(`/assignment-submissions?assignmentId=${assignment.id}`)}
+              >
+                <Text style={styles.viewAllSubsText}>Full Sheet</Text>
+                <Ionicons name="arrow-forward" size={16} color={Colors.primary} />
+              </TouchableOpacity>
             </View>
-          ) : (
-            <View style={styles.submissionContainer}>
-              <View style={styles.submissionHeader}>
-                <View style={styles.submissionIcon}>
-                  <Ionicons name="document" size={24} color={Colors.success} />
-                </View>
-                <View style={styles.submissionInfo}>
-                  <Text style={styles.submissionTitle}>Submitted</Text>
-                  <Text style={styles.submissionDate}>
-                    {formatRelativeDate(submission.submitted_at)}
-                  </Text>
-                  {submission.is_late && (
-                    <Text style={styles.lateText}>⚠️ Late Submission</Text>
-                  )}
-                </View>
-              </View>
 
-              {/* File Info */}
-              <View style={styles.fileContainer}>
-                <View style={styles.fileInfo}>
-                  <Ionicons name="document" size={20} color={Colors.primary} />
-                  <View style={styles.fileDetails}>
-                    <Text style={styles.fileName}>{submission.file_name}</Text>
-                    <Text style={styles.fileSize}>{formatFileSize(submission.file_size)}</Text>
-                  </View>
-                  <TouchableOpacity 
-                    style={styles.downloadButton}
-                    onPress={handleDownload}
-                    disabled={!downloadUrl}
-                  >
-                    <Ionicons name="download" size={16} color={Colors.primary} />
-                  </TouchableOpacity>
-                </View>
+            {allSubmissions.length === 0 ? (
+              <View style={styles.noSubmissionContainer}>
+                <Ionicons name="document-outline" size={48} color={Colors.text.tertiary} />
+                <Text style={styles.noSubmissionText}>No submissions received yet</Text>
+                <Text style={styles.noSubmissionSubtext}>
+                  Submissions will appear here as soon as students submit their work.
+                </Text>
               </View>
+            ) : (
+              <View style={styles.submissionsList}>
+                {allSubmissions.map((sub) => {
+                  const hasPfp = !!sub.student?.avatar_url;
+                  return (
+                    <View key={sub.id} style={styles.submissionRowCard}>
+                      <View style={styles.studentInfoRow}>
+                        {hasPfp ? (
+                          <Image
+                            source={{ uri: sub.student.avatar_url }}
+                            style={styles.studentPfp}
+                          />
+                        ) : (
+                          <View style={styles.studentPfpFallback}>
+                            <Text style={styles.studentPfpInitial}>
+                              {sub.student?.name?.charAt(0)?.toUpperCase() || '?'}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.studentMetaCol}>
+                          <Text style={styles.studentNameText}>{sub.student?.name || 'Student'}</Text>
+                          <Text style={styles.subTimeText}>
+                            Submitted {formatRelativeDate(sub.submitted_at)}
+                            {sub.is_late && <Text style={styles.lateTag}> • Late</Text>}
+                          </Text>
+                        </View>
+                      </View>
 
-              {/* Grade Info */}
-              {isGraded && (
-                <View style={styles.gradeContainer}>
-                  <View style={styles.gradeHeader}>
-                    <Text style={styles.gradeTitle}>Grade</Text>
-                    <Text style={[styles.gradeValue, { color: getGradeColor(submission.percentage || 0) }]}>
-                      {submission.grade}/{assignment.max_score} ({submission.percentage}%)
-                    </Text>
-                  </View>
-                  
-                  {submission.feedback && (
-                    <View style={styles.feedbackContainer}>
-                      <Text style={styles.feedbackTitle}>Teacher Feedback:</Text>
-                      <Text style={styles.feedbackText}>{submission.feedback}</Text>
+                      {/* File attachment button */}
+                      {(sub.file_name || sub.file_path || sub.file_url) && (
+                        <TouchableOpacity
+                          style={styles.openPdfBtn}
+                          onPress={() => openPdfFile(sub.file_path, sub.file_url)}
+                        >
+                          <Ionicons name="document-text" size={18} color={Colors.error} />
+                          <Text style={styles.openPdfBtnText} numberOfLines={1}>
+                            {sub.file_name || 'Open PDF'}
+                          </Text>
+                          <Ionicons name="open-outline" size={16} color={Colors.primary} />
+                        </TouchableOpacity>
+                      )}
+
+                      <View style={styles.subRowActions}>
+                        <TouchableOpacity
+                          style={styles.gradeDetailsBtn}
+                          onPress={() => router.push(`/grade-submission?submissionId=${sub.id}`)}
+                        >
+                          <Text style={styles.gradeDetailsBtnText}>
+                            {sub.grade !== null ? `Grade: ${sub.grade}` : 'Grade Submission'}
+                          </Text>
+                          <Ionicons name="chevron-forward" size={14} color={Colors.primary} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  )}
-                  
-                  <Text style={styles.gradedDate}>
-                    Graded {formatRelativeDate(submission.graded_at)}
-                  </Text>
+                  );
+                })}
+              </View>
+            )}
+          </AnimatedCard>
+        ) : (
+          /* STUDENT VIEW: Submission Status */
+          <AnimatedCard style={styles.statusCard} delay={200}>
+            <Text style={styles.sectionTitle}>My Submission Status</Text>
+            
+            {!submission ? (
+              <View style={styles.noSubmissionContainer}>
+                <Ionicons name="document-outline" size={48} color={Colors.text.tertiary} />
+                <Text style={styles.noSubmissionText}>No submission yet</Text>
+                <Text style={styles.noSubmissionSubtext}>
+                  {isOverdue ? 'This assignment is overdue' : 'Submit your work before the due date'}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.submissionContainer}>
+                <View style={styles.submissionHeader}>
+                  <View style={styles.submissionIcon}>
+                    <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
+                  </View>
+                  <View style={styles.submissionInfo}>
+                    <Text style={styles.submissionTitle}>Submitted</Text>
+                    <Text style={styles.submissionDate}>
+                      {formatRelativeDate(submission.submitted_at)}
+                    </Text>
+                    {submission.is_late && (
+                      <Text style={styles.lateText}>Late Submission</Text>
+                    )}
+                  </View>
                 </View>
-              )}
-            </View>
-          )}
-        </AnimatedCard>
 
-        {/* Action Buttons - Role Based */}
+                {/* File Info */}
+                {(submission.file_name || submission.file_path || submission.file_url) && (
+                  <TouchableOpacity
+                    style={styles.fileContainer}
+                    onPress={() => openPdfFile(submission.file_path, submission.file_url || downloadUrl)}
+                  >
+                    <Ionicons name="document-text" size={22} color={Colors.error} />
+                    <View style={styles.fileDetails}>
+                      <Text style={styles.fileName}>{submission.file_name || 'Assignment PDF'}</Text>
+                      {submission.file_size ? (
+                        <Text style={styles.fileSize}>{formatFileSize(submission.file_size)}</Text>
+                      ) : null}
+                    </View>
+                    <Ionicons name="open-outline" size={18} color={Colors.primary} />
+                  </TouchableOpacity>
+                )}
+
+                {/* Teacher Feedback */}
+                {submission.feedback && (
+                  <View style={styles.feedbackContainer}>
+                    <Text style={styles.feedbackTitle}>Teacher Comment:</Text>
+                    <Text style={styles.feedbackText}>{submission.feedback}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </AnimatedCard>
+        )}
+
+        {/* Action Buttons */}
         <AnimatedCard style={styles.actionsCard} delay={300}>
           {user?.role === 'student' ? (
-            // Student Actions
-            !hasSubmission ? (
+            !submission ? (
               <Button
                 title={isOverdue ? "Submit Late" : "Submit Assignment"}
                 onPress={() => router.push(`/submit-assignment?assignmentId=${assignment.id}`)}
@@ -251,35 +457,27 @@ export default function AssignmentDetails() {
                   variant="outline"
                   style={styles.resubmitButton}
                 />
-                {downloadUrl && (
-                  <Button
-                    title="Download"
-                    onPress={handleDownload}
-                    variant="secondary"
-                    style={styles.downloadActionButton}
-                  />
-                )}
+                <Button
+                  title="View Submitted PDF"
+                  onPress={() => openPdfFile(submission.file_path, submission.file_url || downloadUrl)}
+                  variant="secondary"
+                  style={styles.downloadActionButton}
+                />
               </View>
             )
           ) : (
-            // Teacher/Admin Actions
             <View style={styles.actionButtons}>
-              <Button
-                title="View Submissions"
-                onPress={() => router.push(`/assignment-submissions?assignmentId=${assignment.id}`)}
-                style={styles.actionButton}
-              />
               <Button
                 title="Edit Assignment"
                 onPress={() => router.push(`/edit-assignment?assignmentId=${assignment.id}`)}
                 variant="outline"
-                style={styles.resubmitButton}
+                style={[styles.actionButton, { flex: 1, marginRight: 8 }]}
               />
               <Button
-                title="Grade Submissions"
-                onPress={() => router.push(`/grade-assignment?assignmentId=${assignment.id}`)}
+                title="Delete Assignment"
+                onPress={handleDeleteAssignment}
                 variant="secondary"
-                style={styles.downloadActionButton}
+                style={[styles.actionButton, { flex: 1, backgroundColor: '#EF4444' }]}
               />
             </View>
           )}
@@ -300,6 +498,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.lg,
     backgroundColor: Colors.card.background,
+  },
+  backBtn: {
+    padding: Spacing.xs,
   },
   headerTitle: {
     fontSize: 20,
@@ -326,7 +527,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
   },
   assignmentMeta: {
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   metaItem: {
     flexDirection: 'row',
@@ -341,6 +542,14 @@ const styles = StyleSheet.create({
   overdueText: {
     color: Colors.error,
     fontWeight: '600',
+  },
+  descContainer: {
+    marginBottom: Spacing.md,
+  },
+  descText: {
+    fontSize: 15,
+    color: Colors.text.primary,
+    lineHeight: 22,
   },
   instructionsContainer: {
     padding: Spacing.md,
@@ -367,7 +576,114 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: Colors.text.primary,
-    marginBottom: Spacing.lg,
+  },
+  subTitleText: {
+    fontSize: 13,
+    color: Colors.text.secondary,
+    marginTop: 2,
+  },
+  teacherSubmissionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  viewAllSubsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.primary + '15',
+    borderRadius: 6,
+  },
+  viewAllSubsText: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  submissionsList: {
+    gap: Spacing.md,
+  },
+  submissionRowCard: {
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  studentInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  studentPfp: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: Spacing.md,
+    backgroundColor: Colors.border.medium,
+  },
+  studentPfpFallback: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primary + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  studentPfpInitial: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  studentMetaCol: {
+    flex: 1,
+  },
+  studentNameText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  subTimeText: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+  },
+  lateTag: {
+    color: Colors.error,
+    fontWeight: '600',
+  },
+  openPdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card.background,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    borderRadius: 8,
+    padding: Spacing.sm,
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  openPdfBtnText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text.primary,
+    fontWeight: '500',
+  },
+  subRowActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  gradeDetailsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  gradeDetailsBtnText: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontWeight: '600',
   },
   noSubmissionContainer: {
     alignItems: 'center',
@@ -381,24 +697,20 @@ const styles = StyleSheet.create({
   noSubmissionSubtext: {
     fontSize: 14,
     color: Colors.text.tertiary,
-    marginTop: Spacing.sm,
     textAlign: 'center',
+    marginTop: Spacing.xs,
   },
   submissionContainer: {
-    // Container styles handled by card
+    padding: Spacing.md,
+    backgroundColor: Colors.background,
+    borderRadius: 8,
   },
   submissionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   submissionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Colors.success + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
     marginRight: Spacing.md,
   },
   submissionInfo: {
@@ -406,93 +718,65 @@ const styles = StyleSheet.create({
   },
   submissionTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: Colors.success,
+    fontWeight: 'bold',
+    color: Colors.text.primary,
   },
   submissionDate: {
     fontSize: 14,
     color: Colors.text.secondary,
-    marginTop: 2,
   },
   lateText: {
     fontSize: 12,
-    color: Colors.warning,
+    color: Colors.error,
     fontWeight: '500',
-    marginTop: 2,
+    marginTop: Spacing.xs,
   },
   fileContainer: {
-    marginBottom: Spacing.lg,
-  },
-  fileInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: Colors.card.background,
     padding: Spacing.md,
-    backgroundColor: Colors.background,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    gap: Spacing.md,
   },
   fileDetails: {
     flex: 1,
-    marginLeft: Spacing.md,
   },
   fileName: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: Colors.text.primary,
   },
   fileSize: {
     fontSize: 12,
     color: Colors.text.secondary,
   },
-  downloadButton: {
-    padding: Spacing.sm,
-    borderRadius: 8,
-    backgroundColor: Colors.primary + '20',
-  },
-  gradeContainer: {
+  feedbackContainer: {
+    marginTop: Spacing.md,
     padding: Spacing.md,
-    backgroundColor: Colors.success + '10',
+    backgroundColor: Colors.card.background,
     borderRadius: 8,
     borderLeftWidth: 4,
-    borderLeftColor: Colors.success,
-  },
-  gradeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.md,
-  },
-  gradeTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.text.primary,
-  },
-  gradeValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  feedbackContainer: {
-    marginBottom: Spacing.md,
+    borderLeftColor: Colors.primary,
   },
   feedbackTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text.primary,
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   feedbackText: {
     fontSize: 14,
     color: Colors.text.secondary,
     lineHeight: 20,
   },
-  gradedDate: {
-    fontSize: 12,
-    color: Colors.text.tertiary,
-  },
   actionsCard: {
     marginBottom: Spacing.xl,
   },
   actionButton: {
-    marginBottom: Spacing.sm,
+    width: '100%',
   },
   actionButtons: {
     flexDirection: 'row',

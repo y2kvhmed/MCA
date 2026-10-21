@@ -11,6 +11,7 @@ import AnimatedCard from '../../components/AnimatedCard';
 import FadeInView from '../../components/FadeInView';
 import Button from '../../components/Button';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import RoleProtection from '../../components/RoleProtection';
 import { Colors } from '../../constants/Colors';
 import { Spacing } from '../../constants/Styles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export default function TeacherProfile() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const [assignedSchools, setAssignedSchools] = useState<string[]>([]);
   const [stats, setStats] = useState<any>({});
   const [loading, setLoading] = useState(true);
 
@@ -32,9 +34,74 @@ export default function TeacherProfile() {
       
       setUser(currentUser);
 
-      // Load teacher statistics
-      const statsResult = await getTeacherStats(currentUser.id);
-      setStats(statsResult);
+      try {
+        const { getTeacherSchools } = await import('../../lib/database');
+        const { data: schoolsData } = await getTeacherSchools(currentUser.id);
+        const names = (schoolsData || []).map((s: any) => s.name);
+        if (currentUser.school?.name && !names.includes(currentUser.school.name)) {
+          names.push(currentUser.school.name);
+        }
+        if (names.length === 0 && currentUser.school_id) {
+          const { supabase } = await import('../../lib/supabase');
+          const { data: sRow } = await supabase.from('schools').select('name').eq('id', currentUser.school_id).single();
+          if (sRow?.name) names.push(sRow.name);
+        }
+        setAssignedSchools(names);
+      } catch (sErr) {
+        console.warn('Teacher schools error:', sErr);
+      }
+
+      // Load real teacher statistics from database
+      const { supabase } = await import('../../lib/supabase');
+      
+      // Get assignments created by this teacher
+      const { data: assignments } = await supabase
+        .from('assignments')
+        .select('id')
+        .eq('teacher_id', currentUser.id);
+      
+      const assignmentIds = assignments?.map(a => a.id) || [];
+      
+      // Get submissions for teacher's assignments
+      let totalSubmissions = 0;
+      if (assignmentIds.length > 0) {
+        const { count } = await supabase
+          .from('submissions')
+          .select('id', { count: 'exact', head: true })
+          .in('assignment_id', assignmentIds);
+        totalSubmissions = count || 0;
+      }
+      
+      // Get all school IDs for teacher
+      let teacherSchoolIds: string[] = [];
+      try {
+        const { getTeacherSchoolIds } = await import('../../lib/database');
+        teacherSchoolIds = await getTeacherSchoolIds(currentUser.id);
+      } catch (e) {
+        if (currentUser.school_id) teacherSchoolIds = [currentUser.school_id];
+      }
+      if (teacherSchoolIds.length === 0 && currentUser.school_id) {
+        teacherSchoolIds = [currentUser.school_id];
+      }
+
+      // Get students in teacher's assigned schools
+      let studentQuery = supabase
+        .from('app_users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'student')
+        .eq('is_active', true);
+
+      if (teacherSchoolIds.length > 0) {
+        studentQuery = studentQuery.in('school_id', teacherSchoolIds);
+      }
+
+      const { count: studentCount } = await studentQuery;
+      
+      setStats({
+        totalAssignments: assignments?.length || 0,
+        totalStudents: studentCount || 0,
+        totalSubmissions: totalSubmissions,
+      });
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load profile data');
@@ -70,7 +137,8 @@ export default function TeacherProfile() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <RoleProtection allowedRoles={['teacher']}>
+      <SafeAreaView style={styles.container}>
       <ScrollView style={styles.content}>
         {/* Profile Header */}
         <Card style={styles.profileCard}>
@@ -114,10 +182,17 @@ export default function TeacherProfile() {
           </View>
         </Card>
 
-        {/* Contact Information */}
+        {/* Contact Information & School */}
         <Card style={styles.contactCard}>
-          <Text style={styles.sectionTitle}>Contact Information</Text>
+          <Text style={styles.sectionTitle}>Contact & School</Text>
           
+          <View style={styles.contactItem}>
+            <Ionicons name="school" size={20} color={Colors.primary} />
+            <Text style={styles.contactText}>
+              {assignedSchools.length > 0 ? assignedSchools.join(', ') : (user?.school?.name || 'Not Assigned')}
+            </Text>
+          </View>
+
           <View style={styles.contactItem}>
             <Ionicons name="mail" size={20} color={Colors.text.secondary} />
             <Text style={styles.contactText}>{user?.email}</Text>
@@ -131,58 +206,16 @@ export default function TeacherProfile() {
           )}
         </Card>
 
-        {/* Quick Actions */}
-        <Card style={styles.actionsCard}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          
 
-          
-          <TouchableOpacity 
-            style={styles.actionItem}
-            onPress={() => router.push('/create-assignment')}
-          >
-            <Ionicons name="add-circle" size={24} color={Colors.success} />
-            <Text style={styles.actionText}>Create Assignment</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.actionItem}
-            onPress={() => router.push('/students-list')}
-          >
-            <Ionicons name="people" size={24} color={Colors.warning} />
-            <Text style={styles.actionText}>View Students</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.actionItem}
-            onPress={() => router.push('/add-recording')}
-          >
-            <Ionicons name="videocam" size={24} color={Colors.error} />
-            <Text style={styles.actionText}>Add Recording</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
-        </Card>
 
-        {/* Account Settings */}
-        <Card style={styles.settingsCard}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Account Status:</Text>
-            <Text style={[styles.settingValue, { color: user?.is_active ? Colors.success : Colors.error }]}>
-              {user?.is_active ? 'Active' : 'Inactive'}
-            </Text>
-          </View>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Member Since:</Text>
-            <Text style={styles.settingValue}>
-              {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-            </Text>
-          </View>
-        </Card>
+        {/* Change Password */}
+        <Button
+          title="Change Password"
+          onPress={() => router.push('/change-password')}
+          variant="outline"
+          icon="key-outline"
+          style={{ marginBottom: Spacing.md }}
+        />
 
         {/* Logout Button */}
         <Button
@@ -193,6 +226,7 @@ export default function TeacherProfile() {
         />
       </ScrollView>
     </SafeAreaView>
+    </RoleProtection>
   );
 }
 

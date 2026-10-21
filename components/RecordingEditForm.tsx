@@ -152,11 +152,11 @@ export default function RecordingEditForm({
 
         {/* Video URL Field */}
         <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>YouTube URL</Text>
+          <Text style={styles.fieldLabel}>Video File</Text>
           <Input
-            value={formData.video_url}
+            value={formData.video_url || ''}
             onChangeText={(value) => handleInputChange('video_url', value)}
-            placeholder="https://www.youtube.com/watch?v=..."
+            placeholder="Video file path or URL"
             keyboardType="url"
             autoCapitalize="none"
             style={styles.input}

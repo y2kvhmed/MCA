@@ -18,7 +18,7 @@ export class FinalEmailService {
 
   async sendWelcomeEmail(userData: WelcomeEmailData): Promise<boolean> {
     try {
-      console.log(`🚀 Sending ${userData.role} welcome email to:`, userData.email);
+      console.log(`[Email] Sending ${userData.role} welcome email to:`, userData.email);
 
       // Generate role-specific email content
       const emailContent = this.generateRoleSpecificEmail(userData);
@@ -29,10 +29,10 @@ export class FinalEmailService {
                      await this.sendViaWebhook(userData, emailContent);
       
       if (success) {
-        console.log(`✅ ${userData.role} welcome email sent successfully!`);
+        console.log(`[Email] ${userData.role} welcome email sent successfully!`);
         return true;
       } else {
-        console.log(`❌ All email methods failed, logging content for manual sending`);
+        console.log(`[Email] All email methods failed, logging content for manual sending`);
         this.logEmailForManualSending(userData, emailContent);
         return false;
       }
@@ -47,7 +47,7 @@ export class FinalEmailService {
 
   private async sendViaEmailJS(userData: WelcomeEmailData, emailContent: any): Promise<boolean> {
     try {
-      console.log('📧 Trying EmailJS...');
+      console.log('[Email] Trying EmailJS...');
       
       // Get role-specific template ID
       const templateId = this.getTemplateId(userData.role);
@@ -72,16 +72,16 @@ export class FinalEmailService {
       });
 
       if (response.ok) {
-        console.log(`✅ Email sent via EmailJS using ${templateId}`);
+        console.log(`[Email] Email sent via EmailJS using ${templateId}`);
         return true;
       }
       
-      console.log('⚠️ EmailJS failed:', response.status);
+      console.log('[Email] EmailJS failed:', response.status);
       const errorText = await response.text();
       console.log('Error details:', errorText);
       return false;
-    } catch (error) {
-      console.log('⚠️ EmailJS not available:', error.message);
+    } catch (error: any) {
+      console.log('[Email] EmailJS not available:', error?.message || error);
       return false;
     }
   }
@@ -101,7 +101,7 @@ export class FinalEmailService {
 
   private async sendViaFormspree(userData: WelcomeEmailData, emailContent: any): Promise<boolean> {
     try {
-      console.log('📧 Trying Formspree...');
+      console.log('[Email] Trying Formspree...');
       
       // Formspree free service (you can set this up at formspree.io)
       const response = await fetch('https://formspree.io/f/your_form_id', {
@@ -119,21 +119,21 @@ export class FinalEmailService {
       });
 
       if (response.ok) {
-        console.log('✅ Email sent via Formspree');
+        console.log('[Email] Email sent via Formspree');
         return true;
       }
       
-      console.log('⚠️ Formspree failed:', response.status);
+      console.log('[Email] Formspree failed:', response.status);
       return false;
-    } catch (error) {
-      console.log('⚠️ Formspree not available:', error.message);
+    } catch (error: any) {
+      console.log('[Email] Formspree not available:', error?.message || error);
       return false;
     }
   }
 
   private async sendViaWebhook(userData: WelcomeEmailData, emailContent: any): Promise<boolean> {
     try {
-      console.log('📧 Trying webhook method...');
+      console.log('[Email] Trying webhook method...');
       
       // Simple webhook that just logs the email (for testing)
       const response = await fetch('https://httpbin.org/post', {
@@ -152,15 +152,15 @@ export class FinalEmailService {
       });
 
       if (response.ok) {
-        console.log('✅ Email logged via webhook (for testing)');
+        console.log('[Email] Email logged via webhook (for testing)');
         // For testing purposes, we'll consider this successful
         // In production, replace with actual email service
         return true;
       }
       
       return false;
-    } catch (error) {
-      console.log('⚠️ Webhook method failed:', error.message);
+    } catch (error: any) {
+      console.log('[Email] Webhook method failed:', error?.message || error);
       return false;
     }
   }
@@ -376,7 +376,7 @@ export class FinalEmailService {
             padding-left: 25px;
         }
         .features-list li:before {
-            content: "✓";
+            content: "•";
             color: #ffe164;
             background: #001F3F;
             font-weight: bold;
@@ -452,14 +452,14 @@ export class FinalEmailService {
             <div class="section">
                 <h3>Your ${userData.role} Features</h3>
                 <ul class="features-list">
-                    ${roleContent.features.map(feature => `<li>${feature}</li>`).join('')}
+                    ${roleContent.features.map((feature: any) => `<li>${feature}</li>`).join('')}
                 </ul>
             </div>
             
             <div class="section">
                 <h3>Getting Started</h3>
                 <ol class="steps-list">
-                    ${roleContent.nextSteps.map(step => `<li>${step}</li>`).join('')}
+                    ${roleContent.nextSteps.map((step: any) => `<li>${step}</li>`).join('')}
                 </ol>
             </div>
         </div>
@@ -493,10 +493,10 @@ ${userData.schoolName ? `School: ${userData.schoolName}` : ''}
 Role: ${userData.role.charAt(0).toUpperCase() + userData.role.slice(1)}
 
 YOUR ${userData.role.toUpperCase()} FEATURES:
-${roleContent.features.map((feature, index) => `${index + 1}. ${feature}`).join('\n')}
+${roleContent.features.map((feature: any, index: number) => `${index + 1}. ${feature}`).join('\n')}
 
 GETTING STARTED:
-${roleContent.nextSteps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
+${roleContent.nextSteps.map((step: any, index: number) => `${index + 1}. ${step}`).join('\n')}
 
 ---
 Welcome to Physics, with Mr. Saddam!
@@ -506,14 +506,16 @@ If you need help, contact your school administrator or Mr. Saddam.
   }
 
   private logEmailForManualSending(userData: WelcomeEmailData, emailContent: any): void {
-    console.log('\n🎯 === READY-TO-SEND EMAIL FOR MANUAL DELIVERY ===');
-    console.log('📧 To:', userData.email);
-    console.log('🏷️ Role:', userData.role.toUpperCase());
-    console.log('📝 Subject:', emailContent.subject);
-    console.log('\n📄 --- TEXT VERSION ---');
-    console.log(emailContent.text);
-    console.log('\n🎨 --- HTML VERSION (COPY THIS TO EMAIL CLIENT) ---');
-    console.log(emailContent.html);
-    console.log('\n✅ === EMAIL READY FOR MANUAL SENDING ===\n');
+    if (__DEV__) {
+      console.log('\n=== READY-TO-SEND EMAIL FOR MANUAL DELIVERY ===');
+      console.log('To:', userData.email);
+      console.log('Role:', userData.role.toUpperCase());
+      console.log('Subject:', emailContent.subject);
+      console.log('\n--- TEXT VERSION ---');
+      console.log(emailContent.text);
+      console.log('\n--- HTML VERSION (COPY THIS TO EMAIL CLIENT) ---');
+      console.log(emailContent.html);
+      console.log('\n=== EMAIL READY FOR MANUAL SENDING ===\n');
+    }
   }
 }

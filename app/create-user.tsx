@@ -19,11 +19,9 @@ export default function CreateUser() {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
-  const [parentPhone, setParentPhone] = useState('');
-  // Removed unnecessary fields: emergencyContact, address, dateOfBirth
-  const [gradeLevel, setGradeLevel] = useState('');
   const [role, setRole] = useState<'admin' | 'teacher' | 'student' | ''>('');
   const [schoolId, setSchoolId] = useState('');
+  const [selectedTeacherSchools, setSelectedTeacherSchools] = useState<string[]>([]);
   const [schools, setSchools] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingSchools, setLoadingSchools] = useState(true);
@@ -34,16 +32,32 @@ export default function CreateUser() {
 
   const loadSchools = async () => {
     try {
-      const { data } = await getSchools();
-      if (data) setSchools(data);
+      const { data, error } = await getSchools();
+      if (error) {
+        handleError(error);
+      } else {
+        setSchools(data || []);
+      }
     } catch (error) {
-      console.error('Load schools error:', error);
+      handleError('Failed to load schools');
     } finally {
       setLoadingSchools(false);
     }
   };
 
+  const toggleTeacherSchool = (id: string) => {
+    setSelectedTeacherSchools(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
 
+  const toggleSelectAllSchools = () => {
+    if (selectedTeacherSchools.length === schools.length) {
+      setSelectedTeacherSchools([]);
+    } else {
+      setSelectedTeacherSchools(schools.map(s => s.id));
+    }
+  };
 
   const handleSubmit = async () => {
     if (!email.trim()) {
@@ -66,8 +80,13 @@ export default function CreateUser() {
       return;
     }
 
-    if ((role === 'teacher' || role === 'student') && !schoolId) {
-      Alert.alert('Error', 'Please select a school');
+    if (role === 'student' && !schoolId) {
+      Alert.alert('Error', 'Please select a school for the student');
+      return;
+    }
+
+    if (role === 'teacher' && selectedTeacherSchools.length === 0) {
+      Alert.alert('Error', 'Please select at least one school for the teacher');
       return;
     }
 
@@ -78,20 +97,20 @@ export default function CreateUser() {
 
     setLoading(true);
     try {
-      console.log('Creating user with role:', role, 'school:', schoolId);
+      const primarySchool = role === 'student' ? schoolId : (selectedTeacherSchools[0] || undefined);
+      console.log('Creating user with role:', role, 'schools:', role === 'teacher' ? selectedTeacherSchools : primarySchool);
       
-      const userData = {
+      const userData: any = {
         email: email.trim().toLowerCase(),
         name: name.trim(),
         password: password.trim(),
         phone: phone.trim() || undefined,
-        parent_phone: parentPhone.trim() || undefined,
-        grade_level: gradeLevel.trim() || undefined,
         role,
-        school_id: schoolId || undefined,
+        school_id: primarySchool,
+        school_ids: role === 'teacher' ? selectedTeacherSchools : undefined,
         is_active: true,
       };
-      
+
       console.log('User data to create:', { ...userData, password: '[HIDDEN]' });
       
       const result = await createUserSafely(userData);
@@ -132,14 +151,13 @@ export default function CreateUser() {
           const schoolName = schools.find(s => s.id === schoolId)?.name;
           const emailService = FinalEmailService.getInstance();
           
-          // Always show success message and log email details
-          console.log('📧 Welcome Email Details:');
+          console.log('Welcome Email Details:');
           console.log('=========================');
           console.log(`To: ${userData.email}`);
           console.log(`Name: ${userData.name}`);
           console.log(`Role: ${userData.role}`);
           console.log(`Password: ${userData.password}`);
-          console.log(`School: ${schoolName || 'Physics, with Mr. Saddam'}`);
+          console.log(`School: ${schoolName || 'Physics Platform'}`);
           console.log('=========================');
           
           const emailSent = await emailService.sendWelcomeEmail({
@@ -151,22 +169,20 @@ export default function CreateUser() {
           });
           
           if (emailSent) {
-            showSuccess(`🎉 User created and ${userData.role} welcome email sent automatically!`);
+            showSuccess('User created and welcome email sent!');
           } else {
-            showSuccess(`✅ User created successfully!\n📧 Email details logged to console - you can copy and send manually if needed.`);
+            showSuccess('User created successfully!');
           }
         } catch (emailError) {
           console.error('Welcome email error:', emailError);
-          showSuccess('✅ User created successfully!\n⚠️ Email service unavailable - check console for login details.');
+          showSuccess('User created successfully!');
         }
-        
+
         // Clear all form fields
         setEmail('');
         setName('');
         setPassword('');
         setPhone('');
-        setParentPhone('');
-        setGradeLevel('');
         setRole('');
         setSchoolId('');
         router.back();
@@ -226,26 +242,6 @@ export default function CreateUser() {
           keyboardType="phone-pad"
         />
 
-        {/* Show parent phone and grade level only for students */}
-        {role === 'student' && (
-          <>
-            <Input
-              label="Parent/Guardian Phone"
-              value={parentPhone}
-              onChangeText={setParentPhone}
-              placeholder="Enter parent/guardian phone"
-              keyboardType="phone-pad"
-            />
-
-            <Input
-              label="Grade Level"
-              value={gradeLevel}
-              onChangeText={setGradeLevel}
-              placeholder="e.g., 9th Grade, Sophomore"
-            />
-          </>
-        )}
-
         <Text style={styles.label}>Role *</Text>
         <View style={styles.roleSelector}>
           <TouchableOpacity
@@ -298,31 +294,95 @@ export default function CreateUser() {
               STUDENT
             </Text>
           </TouchableOpacity>
+
         </View>
 
-        {(role === 'teacher' || role === 'student') && (
+        {role === 'student' && (
           <>
             <Text style={styles.label}>School *</Text>
             <View style={styles.schoolSelector}>
-              {schools.map((school) => (
-                <TouchableOpacity
-                  key={school.id}
-                  style={[
-                    styles.schoolButton,
-                    schoolId === school.id && styles.schoolButtonSelected,
-                  ]}
-                  onPress={() => setSchoolId(school.id)}
-                >
-                  <Text
+              {schools.map((school) => {
+                const isSelected = schoolId === school.id;
+                return (
+                  <TouchableOpacity
+                    key={school.id}
                     style={[
-                      styles.schoolButtonText,
-                      schoolId === school.id && styles.schoolButtonTextSelected,
+                      styles.schoolButton,
+                      isSelected && styles.schoolButtonSelected,
                     ]}
+                    onPress={() => setSchoolId(school.id)}
                   >
-                    {school.name}
+                    <View style={styles.schoolRow}>
+                      <Ionicons
+                        name={isSelected ? "radio-button-on" : "radio-button-off"}
+                        size={18}
+                        color={isSelected ? Colors.text.inverse : Colors.text.secondary}
+                        style={{ marginRight: 10 }}
+                      />
+                      <Text
+                        style={[
+                          styles.schoolButtonText,
+                          isSelected && styles.schoolButtonTextSelected,
+                        ]}
+                      >
+                        {school.name}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+
+        {role === 'teacher' && (
+          <>
+            <View style={styles.multiSchoolHeader}>
+              <Text style={styles.label}>
+                Assigned Schools * ({selectedTeacherSchools.length}/{schools.length})
+              </Text>
+              {schools.length > 0 && (
+                <TouchableOpacity onPress={toggleSelectAllSchools} style={styles.selectAllBtn}>
+                  <Text style={styles.selectAllBtnText}>
+                    {selectedTeacherSchools.length === schools.length ? 'Deselect All' : 'Select All'}
                   </Text>
                 </TouchableOpacity>
-              ))}
+              )}
+            </View>
+            <Text style={styles.subLabel}>
+              Teachers can be assigned to multiple schools. Select all that apply.
+            </Text>
+            <View style={styles.schoolSelector}>
+              {schools.map((school) => {
+                const isSelected = selectedTeacherSchools.includes(school.id);
+                return (
+                  <TouchableOpacity
+                    key={school.id}
+                    style={[
+                      styles.schoolButton,
+                      isSelected && styles.schoolButtonSelected,
+                    ]}
+                    onPress={() => toggleTeacherSchool(school.id)}
+                  >
+                    <View style={styles.schoolRow}>
+                      <Ionicons
+                        name={isSelected ? "checkbox" : "square-outline"}
+                        size={18}
+                        color={isSelected ? Colors.text.inverse : Colors.text.secondary}
+                        style={{ marginRight: 10 }}
+                      />
+                      <Text
+                        style={[
+                          styles.schoolButtonText,
+                          isSelected && styles.schoolButtonTextSelected,
+                        ]}
+                      >
+                        {school.name}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </>
         )}
@@ -420,5 +480,53 @@ const styles = StyleSheet.create({
   },
   schoolButtonTextSelected: {
     color: Colors.text.inverse,
+  },
+  sectionHeader: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginTop: Spacing.xl,
+    marginBottom: Spacing.sm,
+  },
+  sectionDescription: {
+    fontSize: 13,
+    color: Colors.text.secondary,
+    marginBottom: Spacing.md,
+    lineHeight: 18,
+  },
+  noStudentsText: {
+    fontSize: 14,
+    color: Colors.text.tertiary,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: Spacing.lg,
+  },
+  schoolRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  multiSchoolHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  subLabel: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginBottom: Spacing.sm,
+  },
+  selectAllBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: Colors.card.background,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+  },
+  selectAllBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
   },
 });

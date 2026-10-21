@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { getMaterialsByTeacher } from '../lib/database';
+import { supabase } from '../lib/supabase';
 import { formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import { exportToCSV } from '../lib/csvExport';
 import Card from '../components/Card';
@@ -30,8 +31,44 @@ export default function MaterialsList() {
       
       setUser(currentUser);
 
-      // Load materials created by this teacher
-      const { data: materialsData } = await getMaterialsByTeacher(currentUser.id);
+      // Load materials - for teachers show their own, for admin show all
+      let materialsData;
+      if (currentUser.role === 'admin') {
+        const { data, error } = await supabase
+          .from('study_materials')
+          .select(`*, school:schools(name), uploaded_by_user:app_users!study_materials_uploaded_by_fkey(id, name)`)
+          .order('created_at', { ascending: false });
+        
+        if (error) {
+          console.error('Admin materials query error:', error);
+        }
+        materialsData = data;
+      } else if (currentUser.role === 'teacher') {
+        // For teachers, get materials they uploaded
+        const { data, error } = await supabase
+          .from('study_materials')
+          .select(`*, school:schools(name), uploaded_by_user:app_users!study_materials_uploaded_by_fkey(id, name)`)
+          .eq('uploaded_by', currentUser.id)
+          .order('created_at', { ascending: false });
+        
+        if (error) {
+          console.error('Teacher materials query error:', error);
+          // Fallback to simpler query
+          const { data: fallbackData } = await supabase
+            .from('study_materials')
+            .select('*')
+            .eq('uploaded_by', currentUser.id)
+            .order('created_at', { ascending: false });
+          materialsData = fallbackData;
+        } else {
+          materialsData = data;
+        }
+      } else {
+        const { data } = await getMaterialsByTeacher(currentUser.id);
+        materialsData = data;
+      }
+      
+      console.log('Loaded materials:', materialsData?.length || 0);
       if (materialsData) setMaterials(materialsData);
     } catch (error) {
       console.error('Load data error:', error);
@@ -64,15 +101,53 @@ export default function MaterialsList() {
     router.push(`/material-details?materialId=${material.id}`);
   };
 
+  const handleDeleteMaterial = (material: any) => {
+    const executeDelete = async () => {
+      try {
+        const { deleteMaterial } = await import('../lib/database');
+        const { error } = await deleteMaterial(material.id);
+        if (error) throw error;
+        setMaterials((prev) => prev.filter((m) => m.id !== material.id));
+        showSuccess('Material deleted successfully');
+      } catch (err: any) {
+        handleError(err, 'Failed to delete material');
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Are you sure you want to delete "${material.title}"?`)) {
+        executeDelete();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Delete Material',
+      `Are you sure you want to delete "${material.title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: executeDelete },
+      ]
+    );
+  };
+
   if (loading) {
     return <LoadingSpinner />;
   }
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace(user?.role === 'admin' ? '/(tabs)/admin-dashboard' : '/(tabs)/teacher-dashboard');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity 
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={styles.backButton}
           activeOpacity={0.7}
         >
@@ -145,7 +220,7 @@ export default function MaterialsList() {
                       style={styles.actionButton}
                       onPress={(e) => {
                         e.stopPropagation();
-                        router.push(`/delete-material?materialId=${material.id}`);
+                        handleDeleteMaterial(material);
                       }}
                     >
                       <Ionicons name="trash" size={16} color={Colors.error} />
@@ -249,6 +324,19 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.xs,
   },
   materialStatus: {
+    alignItems: 'center',
+  },
+  materialActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  actionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.background,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   statusBadge: {

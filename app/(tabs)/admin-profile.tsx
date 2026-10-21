@@ -5,11 +5,12 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser, signOut, updateUserProfile } from '../../lib/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { handleError } from '../../lib/utils';
+import { handleError, showSuccess } from '../../lib/utils';
 import Card from '../../components/Card';
 import Input from '../../components/Input';
 import Button from '../../components/Button';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import RoleProtection from '../../components/RoleProtection';
 import { Colors } from '../../constants/Colors';
 import { Spacing } from '../../constants/Styles';
 
@@ -97,7 +98,8 @@ export default function AdminProfile() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <RoleProtection allowedRoles={['admin']}>
+      <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Profile</Text>
         <View style={styles.headerActions}>
@@ -176,6 +178,7 @@ export default function AdminProfile() {
         />
       </ScrollView>
     </SafeAreaView>
+    </RoleProtection>
   );
 }
 

@@ -1,5 +1,6 @@
-import { Animated, Haptics, Platform } from 'react-native';
+import { Animated, Platform } from 'react-native';
 import { PhysicsAnimations } from './animations';
+import { hapticFeedback } from './haptics';
 
 // Micro-interaction utilities for enhanced user experience
 export class MicroInteractions {
@@ -7,7 +8,7 @@ export class MicroInteractions {
   static buttonPress(scaleValue: Animated.Value, onPress?: () => void) {
     // Haptic feedback
     if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      hapticFeedback.light();
     }
 
     // Visual feedback
@@ -30,7 +31,7 @@ export class MicroInteractions {
   // Card tap with physics-based feedback
   static cardTap(scaleValue: Animated.Value, onTap?: () => void) {
     if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      hapticFeedback.medium();
     }
 
     PhysicsAnimations.elasticCollision(scaleValue).start(() => {
@@ -41,7 +42,7 @@ export class MicroInteractions {
   // Success feedback with celebration animation
   static successFeedback(scaleValue: Animated.Value, onComplete?: () => void) {
     if (Platform.OS !== 'web') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      hapticFeedback.success();
     }
 
     Animated.sequence([
@@ -64,7 +65,7 @@ export class MicroInteractions {
   // Error feedback with shake animation
   static errorFeedback(translateX: Animated.Value, onComplete?: () => void) {
     if (Platform.OS !== 'web') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      hapticFeedback.error();
     }
 
     Animated.sequence([

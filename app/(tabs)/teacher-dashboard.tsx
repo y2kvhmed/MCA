@@ -7,6 +7,7 @@ import { getCurrentUser } from '../../lib/auth';
 import { getSchoolStats, getAssignmentsByTeacher } from '../../lib/database';
 import { formatRelativeDate, handleError } from '../../lib/utils';
 import { loadTeacherDashboard } from '../../lib/dashboardUtils';
+import { useNotifications } from '../../contexts/NotificationContext';
 import Card from '../../components/Card';
 import AnimatedCard from '../../components/AnimatedCard';
 import FadeInView from '../../components/FadeInView';
@@ -14,11 +15,13 @@ import Button from '../../components/Button';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import DashboardErrorBoundary from '../../components/DashboardErrorBoundary';
+import RoleGuard from '../../components/RoleGuard';
 import { Colors } from '../../constants/Colors';
 import { Spacing } from '../../constants/Styles';
 
 export default function TeacherDashboard() {
   const router = useRouter();
+  const { unreadCount } = useNotifications();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<any>({});
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -64,16 +67,21 @@ export default function TeacherDashboard() {
   }
 
   return (
-    <DashboardErrorBoundary>
-      <SafeAreaView style={styles.container}>
+    <RoleGuard allowedRoles={['teacher']}>
+      <DashboardErrorBoundary>
+        <SafeAreaView style={styles.container}>
       <ScrollView 
         style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Welcome Header */}
         <FadeInView style={styles.header}>
-          <Text style={styles.welcomeText}>Welcome back,</Text>
-          <Text style={styles.userName}>{user?.name}</Text>
+          <View style={styles.headerContent}>
+            <View>
+              <Text style={styles.welcomeText}>Welcome back,</Text>
+              <Text style={styles.userName}>{user?.name}</Text>
+            </View>
+          </View>
         </FadeInView>
 
         {/* Stats Cards */}
@@ -123,7 +131,7 @@ export default function TeacherDashboard() {
             
             <TouchableOpacity 
               style={styles.actionButton}
-              onPress={() => router.push('/student-materials')}
+              onPress={() => router.push('/materials-list')}
             >
               <Ionicons name="folder" size={24} color={Colors.info} />
               <Text style={styles.actionText}>Materials</Text>
@@ -131,10 +139,10 @@ export default function TeacherDashboard() {
             
             <TouchableOpacity 
               style={styles.actionButton}
-              onPress={() => router.push('/add-recording')}
+              onPress={() => router.push('/recordings')}
             >
               <Ionicons name="videocam" size={24} color={Colors.warning} />
-              <Text style={styles.actionText}>Add Recording</Text>
+              <Text style={styles.actionText}>Recordings</Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -143,6 +151,30 @@ export default function TeacherDashboard() {
             >
               <Ionicons name="people" size={24} color={Colors.success} />
               <Text style={styles.actionText}>Students</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/attendance')}
+            >
+              <Ionicons name="calendar-outline" size={24} color="#9C27B0" />
+              <Text style={styles.actionText}>Attendance</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/broadcast')}
+            >
+              <Ionicons name="megaphone" size={24} color={Colors.primary} />
+              <Text style={styles.actionText}>Announcements</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/notes')}
+            >
+              <Ionicons name="document-text-outline" size={24} color="#9C27B0" />
+              <Text style={styles.actionText}>Student Notes</Text>
             </TouchableOpacity>
           </View>
         </Card>
@@ -186,9 +218,10 @@ export default function TeacherDashboard() {
         </Card>
 
 
-      </ScrollView>
-    </SafeAreaView>
-    </DashboardErrorBoundary>
+        </ScrollView>
+        </SafeAreaView>
+      </DashboardErrorBoundary>
+    </RoleGuard>
   );
 }
 
@@ -204,6 +237,11 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     backgroundColor: Colors.card.background,
   },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   welcomeText: {
     fontSize: 16,
     color: Colors.text.secondary,
@@ -213,12 +251,37 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Colors.text.primary,
   },
+  notificationButton: {
+    position: 'relative',
+    padding: Spacing.sm,
+  },
+  badge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: Colors.error,
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: Colors.text.inverse,
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
   statsContainer: {
     flexDirection: 'row',
-    padding: Spacing.lg,
-    gap: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    gap: Spacing.sm,
   },
   statCard: {
+    flex: 1,
+  },
+  statCardInner: {
     flex: 1,
   },
   statContent: {

@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { loadAdminDashboard } from '../../lib/dashboardUtils';
+
 import Card from '../../components/Card';
-import Button from '../../components/Button';
+import AnimatedCard from '../../components/AnimatedCard';
+import FadeInView from '../../components/FadeInView';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import DashboardErrorBoundary from '../../components/DashboardErrorBoundary';
+import RoleProtection from '../../components/RoleProtection';
 import { Colors } from '../../constants/Colors';
 import { Spacing } from '../../constants/Styles';
 
 export default function AdminDashboard() {
   const router = useRouter();
+
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState({
     totalSchools: 0,
@@ -21,6 +25,7 @@ export default function AdminDashboard() {
     activeStudents: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -44,8 +49,6 @@ export default function AdminDashboard() {
       
     } catch (error) {
       console.error('Load data error:', error);
-      
-      // Set safe fallback data
       setStats({
         totalSchools: 0,
         totalUsers: 0,
@@ -54,94 +57,148 @@ export default function AdminDashboard() {
       });
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
 
   if (loading) {
     return <LoadingSpinner />;
   }
 
   return (
-    <DashboardErrorBoundary>
-      <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Admin Dashboard</Text>
-        <View style={{ width: 24 }} />
-      </View>
+    <RoleProtection allowedRoles={['admin']}>
+      <DashboardErrorBoundary>
+        <SafeAreaView style={styles.container}>
+          {/* Header */}
+          <FadeInView style={styles.header}>
+            <View style={styles.headerContent}>
+              <View>
+                <Text style={styles.welcomeText}>Welcome back,</Text>
+                <Text style={styles.userName}>{user?.name || 'Admin'}</Text>
+              </View>
+              <View style={{ width: 40 }} />
+            </View>
+          </FadeInView>
 
-      <ScrollView style={styles.content}>
-        <View style={styles.statsGrid}>
-          <Card style={styles.statCard}>
-            <Ionicons name="library" size={32} color={Colors.info} />
-            <Text style={styles.statValue}>{stats.totalSchools}</Text>
-            <Text style={styles.statLabel}>Total Schools</Text>
-          </Card>
+          <ScrollView 
+            style={styles.content}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          >
+            {/* Stats Grid */}
+            <View style={styles.statsGrid}>
+              <AnimatedCard style={styles.statCard} delay={100}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.info + '20' }]}>
+                  <Ionicons name="library" size={24} color={Colors.info} />
+                </View>
+                <Text style={styles.statValue}>{stats.totalSchools}</Text>
+                <Text style={styles.statLabel}>Schools</Text>
+              </AnimatedCard>
 
-          <Card style={styles.statCard}>
-            <Ionicons name="people" size={32} color={Colors.success} />
-            <Text style={styles.statValue}>{stats.totalUsers}</Text>
-            <Text style={styles.statLabel}>All Time Total Users</Text>
-          </Card>
+              <AnimatedCard style={styles.statCard} delay={150}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.success + '20' }]}>
+                  <Ionicons name="people" size={24} color={Colors.success} />
+                </View>
+                <Text style={styles.statValue}>{stats.totalUsers}</Text>
+                <Text style={styles.statLabel}>Users</Text>
+              </AnimatedCard>
 
-          <Card style={styles.statCard}>
-            <Ionicons name="document-text" size={32} color={Colors.warning} />
-            <Text style={styles.statValue}>{stats.totalAssignments}</Text>
-            <Text style={styles.statLabel}>Total Assignments</Text>
-          </Card>
+              <AnimatedCard style={styles.statCard} delay={200}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.warning + '20' }]}>
+                  <Ionicons name="document-text" size={24} color={Colors.warning} />
+                </View>
+                <Text style={styles.statValue}>{stats.totalAssignments}</Text>
+                <Text style={styles.statLabel}>Assignments</Text>
+              </AnimatedCard>
 
-          <Card style={styles.statCard}>
-            <Ionicons name="person" size={32} color={Colors.role.student} />
-            <Text style={styles.statValue}>{stats.activeStudents}</Text>
-            <Text style={styles.statLabel}>Active Students</Text>
-          </Card>
-        </View>
+              <AnimatedCard style={styles.statCard} delay={250}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.primary + '20' }]}>
+                  <Ionicons name="school" size={24} color={Colors.primary} />
+                </View>
+                <Text style={styles.statValue}>{stats.activeStudents}</Text>
+                <Text style={styles.statLabel}>Students</Text>
+              </AnimatedCard>
+            </View>
 
-        <View style={styles.actions}>
-          <Button
-            title="View All Users"
-            onPress={() => router.push('/view-users')}
-            style={styles.actionButton}
-            variant="secondary"
-          />
-          <Button
-            title="Create School"
-            onPress={() => router.push('/create-school')}
-            style={styles.actionButton}
-          />
-          <Button
-            title="Create User"
-            onPress={() => router.push('/create-user')}
-            style={styles.actionButton}
-          />
-          <Button
-            title="Manage Schools"
-            onPress={() => router.push('/view-schools')}
-            variant="secondary"
-            style={styles.actionButton}
-          />
-          <Button
-            title="Manage Recordings"
-            onPress={() => router.push('/recordings')}
-            variant="outline"
-            style={styles.actionButton}
-          />
-          <Button
-            title="Edit User Passwords"
-            onPress={() => router.push('/manage-users')}
-            variant="secondary"
-            style={styles.actionButton}
-          />
-        </View>
+            {/* Quick Actions */}
+            <AnimatedCard style={styles.actionsCard} delay={300}>
+              <Text style={styles.sectionTitle}>Quick Actions</Text>
+              <View style={styles.actionsGrid}>
+                <TouchableOpacity style={styles.actionItem} onPress={() => router.push('/create-user')}>
+                  <View style={[styles.actionIcon, { backgroundColor: Colors.success + '20' }]}>
+                    <Ionicons name="person-add" size={24} color={Colors.success} />
+                  </View>
+                  <Text style={styles.actionText}>Add User</Text>
+                </TouchableOpacity>
 
-        <Card style={styles.activityCard}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          <Text style={styles.placeholderText}>No recent activity</Text>
-        </Card>
-      </ScrollView>
-    </SafeAreaView>
-    </DashboardErrorBoundary>
+                <TouchableOpacity style={styles.actionItem} onPress={() => router.push('/create-school')}>
+                  <View style={[styles.actionIcon, { backgroundColor: Colors.info + '20' }]}>
+                    <Ionicons name="add-circle" size={24} color={Colors.info} />
+                  </View>
+                  <Text style={styles.actionText}>Add School</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.actionItem} onPress={() => router.push('/view-users')}>
+                  <View style={[styles.actionIcon, { backgroundColor: Colors.primary + '20' }]}>
+                    <Ionicons name="people" size={24} color={Colors.primary} />
+                  </View>
+                  <Text style={styles.actionText}>View Users</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.actionItem} onPress={() => router.push('/view-schools')}>
+                  <View style={[styles.actionIcon, { backgroundColor: Colors.warning + '20' }]}>
+                    <Ionicons name="library" size={24} color={Colors.warning} />
+                  </View>
+                  <Text style={styles.actionText}>Schools</Text>
+                </TouchableOpacity>
+              </View>
+            </AnimatedCard>
+
+            {/* Management Section */}
+            <AnimatedCard style={styles.managementCard} delay={400}>
+              <Text style={styles.sectionTitle}>Management</Text>
+              
+              <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/recordings')}>
+                <View style={styles.menuItemLeft}>
+                  <Ionicons name="videocam" size={22} color={Colors.primary} />
+                  <Text style={styles.menuItemText}>Manage Recordings</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+
+
+              <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/materials-list')}>
+                <View style={styles.menuItemLeft}>
+                  <Ionicons name="folder" size={22} color={Colors.info} />
+                  <Text style={styles.menuItemText}>View Materials</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/admin-chats')}>
+                <View style={styles.menuItemLeft}>
+                  <Ionicons name="chatbubbles" size={22} color="#9C27B0" />
+                  <Text style={styles.menuItemText}>View School Chats</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.menuItem, styles.menuItemLast]} onPress={() => router.push('/admin-controls')}>
+                <View style={styles.menuItemLeft}>
+                  <Ionicons name="settings" size={22} color={Colors.text.secondary} />
+                  <Text style={styles.menuItemText}>Controls</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+            </AnimatedCard>
+          </ScrollView>
+        </SafeAreaView>
+      </DashboardErrorBoundary>
+    </RoleProtection>
   );
 }
 
@@ -151,17 +208,24 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     padding: Spacing.lg,
     backgroundColor: Colors.card.background,
   },
-  headerTitle: {
-    fontSize: 20,
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  welcomeText: {
+    fontSize: 14,
+    color: Colors.text.secondary,
+  },
+  userName: {
+    fontSize: 22,
     fontWeight: 'bold',
     color: Colors.text.primary,
   },
+
   content: {
     flex: 1,
     padding: Spacing.lg,
@@ -170,44 +234,94 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.lg,
+    gap: Spacing.md,
   },
   statCard: {
-    width: '48%',
+    width: '47%',
+    minWidth: 150,
     alignItems: 'center',
-    marginBottom: Spacing.lg,
-    padding: Spacing.lg,
+    padding: Spacing.xl,
+    marginBottom: Spacing.sm,
+  },
+  statIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
   },
   statValue: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: Colors.text.primary,
-    marginTop: Spacing.sm,
   },
   statLabel: {
     fontSize: 12,
     color: Colors.text.secondary,
-    textAlign: 'center',
+    marginTop: 2,
   },
-  actions: {
-    marginBottom: Spacing.xl,
-  },
-  actionButton: {
-    marginBottom: Spacing.md,
-  },
-  activityCard: {
-    marginBottom: Spacing.xl,
+  actionsCard: {
+    marginBottom: Spacing.lg,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: Colors.text.primary,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.lg,
   },
-  placeholderText: {
+  actionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.md,
+  },
+  actionItem: {
+    width: '47%',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+  },
+  actionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  actionText: {
     fontSize: 14,
-    color: Colors.text.tertiary,
-    textAlign: 'center',
-    padding: Spacing.xl,
+    color: Colors.text.primary,
+    fontWeight: '500',
   },
+  managementCard: {
+    marginBottom: Spacing.xl,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  menuItemLast: {
+    borderBottomWidth: 0,
+  },
+  menuItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  menuItemText: {
+    fontSize: 16,
+    color: Colors.text.primary,
+    marginLeft: Spacing.md,
+  },
+  menuItemRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
 });

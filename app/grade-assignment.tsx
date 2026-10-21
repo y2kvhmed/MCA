@@ -149,7 +149,7 @@ export default function GradeAssignment() {
             Submitted {formatRelativeDate(submission.submitted_at)}
           </Text>
           {submission.is_late && (
-            <Text style={styles.lateText}>⚠️ Late Submission</Text>
+            <Text style={styles.lateText}>Late Submission</Text>
           )}
         </View>
 

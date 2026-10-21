@@ -28,6 +28,7 @@ export interface RecordingFormData {
   title: string;
   description: string;
   video_path?: string;
+  video_url?: string;
   video_file?: any;
   duration_minutes?: number;
   tags?: string[];
@@ -64,7 +65,7 @@ export async function uploadVideoToSupabase(
       videoData = await response.blob();
     } else {
       const base64 = await FileSystem.readAsStringAsync(videoUri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: (FileSystem as any).EncodingType?.Base64 || 'base64',
       });
       
       const binaryString = atob(base64);
@@ -119,7 +120,7 @@ export async function uploadImageToSupabase(
       imageData = await response.blob();
     } else {
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: (FileSystem as any).EncodingType?.Base64 || 'base64',
       });
       
       const binaryString = atob(base64);
@@ -175,7 +176,7 @@ export async function uploadFileToSupabase(
       fileData = await response.blob();
     } else {
       const base64 = await FileSystem.readAsStringAsync(fileUri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: (FileSystem as any).EncodingType?.Base64 || 'base64',
       });
       
       const binaryString = atob(base64);
@@ -451,7 +452,7 @@ export function validateRecordingForm(formData: RecordingFormData): string[] {
 
 // Check if video path is valid
 function isValidVideoPath(path: string): boolean {
-  return path && path.length > 0 && path.length < 500;
+  return Boolean(path && path.length > 0 && path.length < 500);
 }
 
 // Check if user can edit recording

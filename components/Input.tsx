@@ -5,6 +5,7 @@ import {
   TextInput,
   StyleSheet,
   KeyboardTypeOptions,
+  StyleProp,
   TextStyle,
 } from 'react-native';
 import { Colors } from '../constants/Colors';
@@ -21,7 +22,8 @@ interface InputProps {
   error?: string;
   multiline?: boolean;
   numberOfLines?: number;
-  style?: TextStyle;
+  maxLength?: number;
+  style?: StyleProp<TextStyle>;
 }
 
 export default function Input({
@@ -35,6 +37,7 @@ export default function Input({
   error,
   multiline = false,
   numberOfLines = 1,
+  maxLength,
   style,
 }: InputProps) {
   return (
@@ -56,6 +59,7 @@ export default function Input({
         autoCapitalize={autoCapitalize}
         multiline={multiline}
         numberOfLines={multiline ? numberOfLines : 1}
+        maxLength={maxLength}
         textAlignVertical={multiline ? 'top' : 'center'}
       />
       {error && <Text style={styles.errorText}>{error}</Text>}

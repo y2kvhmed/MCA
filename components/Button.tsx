@@ -4,6 +4,7 @@ import {
   Text,
   ActivityIndicator,
   StyleSheet,
+  StyleProp,
   ViewStyle,
   TextStyle,
   View,
@@ -19,7 +20,7 @@ interface ButtonProps {
   loading?: boolean;
   variant?: 'primary' | 'secondary' | 'outline' | 'danger';
   size?: 'small' | 'medium' | 'large';
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   icon?: keyof typeof Ionicons.glyphMap;
 }
 

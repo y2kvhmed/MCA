@@ -6,10 +6,9 @@ export interface CreateUserData {
   name: string;
   password: string;
   phone?: string;
-  parent_phone?: string;
-  grade_level?: string;
   role: 'admin' | 'teacher' | 'student';
   school_id?: string;
+  school_ids?: string[];
 }
 
 export interface CreateUserResult {
@@ -37,9 +36,15 @@ export async function createUserSafely(userData: CreateUserData): Promise<Create
       };
     }
 
+    // Determine primary school
+    const primarySchoolId = (userData.school_ids && userData.school_ids.length > 0)
+      ? userData.school_ids[0]
+      : userData.school_id;
+
     // Create the user
     const result = await createUser({
       ...userData,
+      school_id: primarySchoolId,
       email: userData.email.toLowerCase(),
       is_active: true
     });
@@ -60,6 +65,12 @@ export async function createUserSafely(userData: CreateUserData): Promise<Create
       };
     }
 
+    // If teacher has assigned schools, sync with teacher_schools
+    if (result.data?.id && userData.role === 'teacher' && userData.school_ids && userData.school_ids.length > 0) {
+      const { setTeacherSchools } = await import('./database');
+      await setTeacherSchools(result.data.id, userData.school_ids);
+    }
+
     return {
       success: true,
       data: result.data
@@ -78,13 +89,17 @@ export async function updateExistingUser(userId: string, updates: Partial<Create
   try {
     const updateData: any = {};
     
+    if (updates.email) updateData.email = updates.email.trim().toLowerCase();
     if (updates.name) updateData.name = updates.name;
-    if (updates.phone) updateData.phone = updates.phone;
-    if (updates.parent_phone) updateData.parent_phone = updates.parent_phone;
-    if (updates.grade_level) updateData.grade_level = updates.grade_level;
+    if (updates.phone !== undefined) updateData.phone = updates.phone;
     if (updates.role) updateData.role = updates.role;
-    if (updates.school_id) updateData.school_id = updates.school_id;
     if (updates.password) updateData.password_hash = updates.password;
+
+    if (updates.school_ids && updates.school_ids.length > 0) {
+      updateData.school_id = updates.school_ids[0];
+    } else if (updates.school_id !== undefined) {
+      updateData.school_id = updates.school_id;
+    }
 
     const { data, error } = await supabase
       .from('app_users')
@@ -98,6 +113,12 @@ export async function updateExistingUser(userId: string, updates: Partial<Create
         success: false,
         error: error.message
       };
+    }
+
+    // If updating teacher schools
+    if (updates.school_ids !== undefined) {
+      const { setTeacherSchools } = await import('./database');
+      await setTeacherSchools(userId, updates.school_ids);
     }
 
     return {

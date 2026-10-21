@@ -18,22 +18,30 @@ export default function CreateSchool() {
 
   const handleSubmit = async () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'School name is required');
+      Alert.alert('Error', 'Please enter a school name');
       return;
     }
 
     setLoading(true);
     try {
-      const { error } = await createSchool(name, description);
-      
+      const { data, error } = await createSchool({
+        name: name.trim(),
+        description: description.trim()
+      });
+
       if (error) {
-        handleError(error, 'Failed to create school');
-      } else {
-        showSuccess('School created successfully');
+        handleError(error);
+        return;
+      }
+
+      showSuccess('School created successfully!');
+      if (router.canGoBack()) {
         router.back();
+      } else {
+        router.replace('/view-schools');
       }
     } catch (error) {
-      handleError(error, 'An unexpected error occurred');
+      handleError('Failed to create school');
     } finally {
       setLoading(false);
     }
@@ -42,14 +50,13 @@ export default function CreateSchool() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/view-schools')} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create School</Text>
-        <View style={{ width: 24 }} />
+        <Text style={styles.title}>Create School</Text>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <Input
           label="School Name *"
           value={name}
@@ -61,16 +68,17 @@ export default function CreateSchool() {
           label="Description"
           value={description}
           onChangeText={setDescription}
-          placeholder="Enter school description"
+          placeholder="Enter school description (optional)"
           multiline
-          numberOfLines={4}
+          numberOfLines={3}
         />
 
         <Button
           title="Create School"
           onPress={handleSubmit}
           loading={loading}
-          disabled={loading}
+          disabled={loading || !name.trim()}
+          style={styles.submitButton}
         />
       </ScrollView>
     </SafeAreaView>
@@ -84,12 +92,15 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     padding: Spacing.lg,
-    backgroundColor: Colors.card.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
   },
-  headerTitle: {
+  backButton: {
+    marginRight: Spacing.md,
+  },
+  title: {
     fontSize: 20,
     fontWeight: 'bold',
     color: Colors.text.primary,
@@ -98,4 +109,8 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: Spacing.lg,
   },
+  submitButton: {
+    marginTop: Spacing.xl,
+  },
 });
+

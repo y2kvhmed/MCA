@@ -5,16 +5,20 @@ import { decode } from 'base64-arraybuffer';
 
 // File upload configuration
 export const FILE_CONFIG = {
-  maxSizeBytes: 10 * 1024 * 1024, // 10MB
+  maxSizeBytes: 50 * 1024 * 1024, // 50MB for assignments and student work
+  maxMaterialSizeBytes: 100 * 1024 * 1024, // 100MB for study materials
+  maxVideoSizeBytes: 1024 * 1024 * 1024, // 1GB for video recordings
   allowedTypes: [
     'application/pdf',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'image/jpeg',
     'image/png',
+    'image/webp',
     'image/gif',
-    'text/plain'
+    'text/plain',
   ],
+  allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'txt'],
   buckets: {
     assignments: 'assignment-submissions',
     profiles: 'user-profiles',
@@ -29,17 +33,22 @@ export function validateFile(file: any): { isValid: boolean; error?: string } {
     return { isValid: false, error: 'No file selected' };
   }
 
-  if (file.size > FILE_CONFIG.maxSizeBytes) {
+  if (file.size && file.size > FILE_CONFIG.maxSizeBytes) {
     return { 
       isValid: false, 
       error: `File size must be less than ${FILE_CONFIG.maxSizeBytes / (1024 * 1024)}MB` 
     };
   }
 
-  if (!FILE_CONFIG.allowedTypes.includes(file.mimeType || file.type)) {
+  const name = file.name || file.fileName || '';
+  const ext = name.split('.').pop()?.toLowerCase();
+  const isMimeAllowed = FILE_CONFIG.allowedTypes.includes(file.mimeType || file.type);
+  const isExtAllowed = ext && FILE_CONFIG.allowedExtensions.includes(ext);
+
+  if (!isMimeAllowed && !isExtAllowed) {
     return { 
       isValid: false, 
-      error: 'File type not allowed. Please upload PDF, Word, or image files.' 
+      error: 'File type not allowed. Please upload a PDF, Word document, or image file.' 
     };
   }
 

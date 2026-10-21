@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getSchools, getAllClasses } from '../lib/database';
+import { getSchools } from '../lib/database';
+import { supabase } from '../lib/supabase';
 import { sendCustomEmail, getUserEmails } from '../lib/emailService';
 import { handleError, showSuccess } from '../lib/utils';
 import Input from '../components/Input';
@@ -42,7 +43,7 @@ export default function ComposeEmail() {
       if (currentUser?.role === 'admin' || currentUser?.role === 'teacher') {
         const [schoolsResult, classesResult] = await Promise.all([
           getSchools(),
-          getAllClasses()
+          supabase.from('classes').select('*')
         ]);
 
         if (schoolsResult.data) setSchools(schoolsResult.data);

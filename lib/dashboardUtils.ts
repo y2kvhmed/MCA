@@ -67,13 +67,38 @@ export async function loadStudentDashboard(): Promise<DashboardData> {
       return { user, stats: {}, error: 'User is not a student' };
     }
 
-    // Load stats with fallback
-    let stats = { totalMaterials: 0, totalAssignments: 0, averageGrade: 0 };
-    try {
-      stats = await getStudentStats(user.id);
-    } catch (error) {
-      console.error('Failed to load student stats:', error);
+    // Import supabase for direct queries
+    const { supabase } = await import('./supabase');
+
+    // Get materials count for student's school
+    let totalMaterials = 0;
+    if (user.school_id) {
+      const { count } = await supabase
+        .from('study_materials')
+        .select('id', { count: 'exact', head: true })
+        .eq('school_id', user.school_id);
+      totalMaterials = count || 0;
     }
+
+    // Get assignments count for student's school
+    let totalAssignments = 0;
+    if (user.school_id) {
+      const { count } = await supabase
+        .from('assignments')
+        .select('id', { count: 'exact', head: true })
+        .eq('school_id', user.school_id);
+      totalAssignments = count || 0;
+    }
+
+    // Count submissions
+    let submittedCount = 0;
+    const { count: subCount } = await supabase
+      .from('submissions')
+      .select('id', { count: 'exact', head: true })
+      .eq('student_id', user.id);
+    submittedCount = subCount || 0;
+
+    const stats = { totalMaterials, totalAssignments, submittedCount };
 
     // Load assignments with fallback
     let assignments: any[] = [];

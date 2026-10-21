@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getAssignmentsByTeacher } from '../lib/database';
-import { formatDueDate, formatRelativeDate, handleError } from '../lib/utils';
+import { getAssignmentsByTeacher, deleteAssignment } from '../lib/database';
+import { formatDueDate, formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import AnimatedCard from '../components/AnimatedCard';
 import FadeInView from '../components/FadeInView';
 import Button from '../components/Button';
@@ -39,9 +39,14 @@ export default function TeacherAssignments() {
       }
 
       const { data: assignmentsData, error } = await getAssignmentsByTeacher(currentUser.id);
-      if (error) throw error;
-      
-      setAssignments(assignmentsData || []);
+      if (error) {
+        console.error('Get assignments error:', error);
+        // Don't throw, just set empty array
+        setAssignments([]);
+      } else {
+        console.log(`Loaded ${assignmentsData?.length || 0} assignments`);
+        setAssignments(assignmentsData || []);
+      }
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load assignments');
@@ -54,6 +59,35 @@ export default function TeacherAssignments() {
   const onRefresh = () => {
     setRefreshing(true);
     loadData();
+  };
+
+  const handleDeleteAssignment = (assignment: any) => {
+    const executeDelete = async () => {
+      try {
+        const { error } = await deleteAssignment(assignment.id);
+        if (error) throw error;
+        setAssignments((prev) => prev.filter((a) => a.id !== assignment.id));
+        showSuccess('Assignment deleted successfully');
+      } catch (err: any) {
+        handleError(err, 'Failed to delete assignment');
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Are you sure you want to delete "${assignment.title}"? This cannot be undone.`)) {
+        executeDelete();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Delete Assignment',
+      `Are you sure you want to delete "${assignment.title}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: executeDelete },
+      ]
+    );
   };
 
   const getStatusColor = (assignment: any) => {
@@ -138,11 +172,7 @@ export default function TeacherAssignments() {
                       </Text>
                     </View>
                   )}
-                  
-                  <View style={styles.metaItem}>
-                    <Ionicons name="trophy" size={14} color={Colors.text.secondary} />
-                    <Text style={styles.metaText}>Max: {assignment.max_score} pts</Text>
-                  </View>
+
                   
                   <View style={styles.metaItem}>
                     <Ionicons name="document" size={14} color={Colors.text.secondary} />
@@ -179,7 +209,7 @@ export default function TeacherAssignments() {
                     style={styles.actionButton}
                     onPress={(e) => {
                       e.stopPropagation();
-                      router.push(`/delete-assignment?assignmentId=${assignment.id}`);
+                      handleDeleteAssignment(assignment);
                     }}
                   >
                     <Ionicons name="trash" size={16} color={Colors.error} />

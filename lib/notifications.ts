@@ -8,7 +8,9 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
-  }),
+    shouldShowBanner: true,
+    shouldShowList: true,
+  } as any),
 });
 
 export async function registerForPushNotificationsAsync() {
@@ -71,7 +73,7 @@ export async function scheduleNotification(
       data,
       sound: true,
     },
-    trigger: typeof trigger === 'number' ? { seconds: trigger } : trigger,
+    trigger: (typeof trigger === 'number' ? { seconds: trigger } : trigger) as any,
   });
 }
 
@@ -295,7 +297,7 @@ export async function scheduleAssignmentReminder(assignmentId: string, dueDate: 
         body: 'You have an assignment due tomorrow. Don\'t forget to submit!',
         data: { assignmentId, type: 'assignment_reminder' },
       },
-      trigger: { date: reminderDate },
+      trigger: { date: reminderDate } as any,
     });
   }
 }

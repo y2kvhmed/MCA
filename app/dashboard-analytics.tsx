@@ -85,7 +85,7 @@ export default function DashboardAnalytics() {
         newSubmissions,
         usersByRole,
         averageGrade,
-        gradingRate: submissions.data?.length > 0 ? (gradedSubmissions.length / submissions.data.length) * 100 : 0
+        gradingRate: (submissions.data && submissions.data.length > 0) ? (gradedSubmissions.length / submissions.data.length) * 100 : 0
       });
 
     } catch (error) {
@@ -146,8 +146,8 @@ export default function DashboardAnalytics() {
       
       const gradedSubmissions = submissions.data?.filter(s => s.grade !== null) || [];
       const averageGrade = gradedSubmissions.length > 0
-        ? gradedSubmissions.reduce((sum, s) => {
-            const maxScore = s.assignment?.max_score || 100;
+        ? gradedSubmissions.reduce((sum: number, s: any) => {
+            const maxScore = (Array.isArray(s.assignment) ? s.assignment[0]?.max_score : s.assignment?.max_score) || 100;
             return sum + ((Number(s.grade) || 0) / maxScore) * 100;
           }, 0) / gradedSubmissions.length
         : 0;

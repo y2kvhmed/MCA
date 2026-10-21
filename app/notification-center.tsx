@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
+import { getAnnouncements } from '../lib/database';
 import { formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -54,8 +55,7 @@ export default function NotificationCenter() {
 
   const loadNotifications = async (userId: string) => {
     try {
-      // Generate mock notifications based on user activity
-      const mockNotifications: Notification[] = [];
+      const realNotifications: Notification[] = [];
       
       // Get recent assignments for assignment notifications
       const { data: assignments } = await supabase
@@ -82,7 +82,7 @@ export default function NotificationCenter() {
           const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
           
           if (daysUntilDue <= 3) {
-            mockNotifications.push({
+            realNotifications.push({
               id: `assignment-${assignment.id}`,
               title: 'Assignment Due Soon',
               message: `"${assignment.title}" is due in ${daysUntilDue} day${daysUntilDue !== 1 ? 's' : ''}`,
@@ -98,7 +98,7 @@ export default function NotificationCenter() {
         // New assignment notification
         const createdDate = new Date(assignment.created_at);
         if (now.getTime() - createdDate.getTime() < 7 * 24 * 60 * 60 * 1000) {
-          mockNotifications.push({
+          realNotifications.push({
             id: `new-assignment-${assignment.id}`,
             title: 'New Assignment Available',
             message: `"${assignment.title}" has been assigned to you`,
@@ -114,10 +114,13 @@ export default function NotificationCenter() {
       // Create grade notifications
       submissions?.forEach((submission, index) => {
         if (submission.graded_at) {
-          mockNotifications.push({
-            id: `grade-${submission.id}`,
-            title: 'Assignment Graded',
-            message: `Your submission for "${submission.assignment?.title}" has been graded`,
+            const assignmentTitle = Array.isArray(submission.assignment) 
+              ? (submission.assignment[0] as any)?.title 
+              : (submission.assignment as any)?.title;
+            realNotifications.push({
+              id: `grade-${submission.id}`,
+              title: 'Assignment Graded',
+              message: `Your submission for "${assignmentTitle || 'Assignment'}" has been graded`,
             type: 'grade',
             read: index > 1,
             created_at: submission.graded_at,
@@ -127,30 +130,25 @@ export default function NotificationCenter() {
         }
       });
 
-      // Add some system notifications
-      mockNotifications.push(
-        {
-          id: 'system-1',
-          title: 'Welcome to Physics Learning',
-          message: 'Complete your profile to get the most out of the platform',
-          type: 'system',
-          read: true,
-          created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-          action_url: '/settings'
-        },
-        {
-          id: 'announcement-1',
-          title: 'Platform Update',
-          message: 'New features have been added to improve your learning experience',
-          type: 'announcement',
-          read: false,
-          created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
-        }
-      );
+      // Fetch real announcements from database
+      const { data: realAnnouncements } = await getAnnouncements(userId);
+      if (realAnnouncements && realAnnouncements.length > 0) {
+        realAnnouncements.slice(0, 5).forEach((ann: any) => {
+          realNotifications.push({
+            id: `announcement-${ann.id}`,
+            title: ann.title || 'Announcement',
+            message: ann.content || '',
+            type: 'announcement',
+            read: false,
+            created_at: ann.created_at,
+            action_url: '/announcements'
+          });
+        });
+      }
 
       // Sort by date and set notifications
-      mockNotifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      setNotifications(mockNotifications);
+      realNotifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setNotifications(realNotifications);
 
     } catch (error) {
       console.error('Load notifications error:', error);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -44,18 +44,25 @@ export default function DeleteMaterial() {
   };
 
   const handleDelete = async () => {
-    Alert.alert(
-      'Delete Material',
-      `Are you sure you want to delete "${material?.title}"? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: confirmDelete
-        }
-      ]
-    );
+    const confirmMsg = `Are you sure you want to delete "${material?.title}"? This action cannot be undone.`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMsg)) {
+        confirmDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Material',
+        confirmMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Delete', 
+            style: 'destructive',
+            onPress: confirmDelete
+          }
+        ]
+      );
+    }
   };
 
   const confirmDelete = async () => {

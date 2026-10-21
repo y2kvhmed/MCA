@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../lib/supabase';
+import { deleteAssignment } from '../lib/database';
 import { getCurrentUser } from '../lib/auth';
 import { handleError, showSuccess } from '../lib/utils';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
+import { supabase } from '../lib/supabase';
 
 export default function DeleteAssignment() {
   const router = useRouter();
@@ -56,32 +57,41 @@ export default function DeleteAssignment() {
   };
 
   const handleDelete = async () => {
-    Alert.alert(
-      'Delete Assignment',
-      `Are you sure you want to delete "${assignment?.title}"? This action cannot be undone and will also delete all ${submissions.length} submissions.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: confirmDelete
-        }
-      ]
-    );
+    const confirmMsg = `Are you sure you want to delete "${assignment?.title}"? This action cannot be undone and will also delete all ${submissions.length} submissions.`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMsg)) {
+        confirmDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Assignment',
+        confirmMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Delete', 
+            style: 'destructive',
+            onPress: confirmDelete
+          }
+        ]
+      );
+    }
   };
 
   const confirmDelete = async () => {
     setDeleting(true);
     try {
-      // First delete all submissions for this assignment
-      const { error: submissionsError } = await supabase
-        .from('submissions')
+      // First delete comments
+      await supabase
+        .from('assignment_comments')
         .delete()
         .eq('assignment_id', assignmentId);
 
-      if (submissionsError) {
-        console.warn('Submissions delete warning:', submissionsError);
-      }
+      // Delete all submissions for this assignment
+      await supabase
+        .from('submissions')
+        .delete()
+        .eq('assignment_id', assignmentId);
 
       // Delete the assignment
       const { error } = await supabase
@@ -93,10 +103,13 @@ export default function DeleteAssignment() {
 
       showSuccess('Assignment deleted successfully');
       
-      // Navigate back after a short delay to ensure state updates
       setTimeout(() => {
-        router.back();
-      }, 500);
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(tabs)/teacher-dashboard');
+        }
+      }, 300);
     } catch (error) {
       console.error('Delete error:', error);
       handleError(error, 'Failed to delete assignment');

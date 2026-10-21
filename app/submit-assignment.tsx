@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { pickAssignmentFile, submitAssignment, getSubmissionWithFile } from '../lib/fileUpload';
+import { pickAssignmentFile } from '../lib/fileUpload';
 import { formatFileSize, formatDueDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -30,34 +30,42 @@ export default function SubmitAssignment() {
   const loadData = async () => {
     try {
       const currentUser = await getCurrentUser();
+      if (!currentUser) return;
       setUser(currentUser);
 
-      // Load assignment details
-      const { data: assignmentData, error } = await supabase
+      let assignmentData: any = null;
+      const { data, error } = await supabase
         .from('assignments')
-        .select(`
-          *,
-          school:schools(id, name),
-          teacher:app_users!assignments_teacher_id_fkey(id, name)
-        `)
+        .select(`*, school:schools(id, name), teacher:app_users(id, name)`)
         .eq('id', assignmentId)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.warn('Assignment join failed, using fallback:', error.message);
+        const { data: fbData, error: fbError } = await supabase
+          .from('assignments')
+          .select('*')
+          .eq('id', assignmentId)
+          .single();
+        if (fbError) throw fbError;
+        assignmentData = fbData;
+      } else {
+        assignmentData = data;
+      }
       setAssignment(assignmentData);
 
-      // Check for existing submission
+      // Use maybeSingle() instead of single() to avoid 406 error when no submission exists
       const { data: submissionData, error: submissionError } = await supabase
         .from('submissions')
         .select('*')
         .eq('assignment_id', assignmentId)
         .eq('student_id', currentUser.id)
-        .single();
+        .maybeSingle();
 
-      if (submissionError && submissionError.code !== 'PGRST116') {
-        throw submissionError;
+      if (submissionError) {
+        console.log('Submission check error:', submissionError);
+        // Don't throw - just means no submission exists
       }
-
       if (submissionData) {
         setExistingSubmission(submissionData);
       }
@@ -72,7 +80,6 @@ export default function SubmitAssignment() {
   const handlePickFile = async () => {
     try {
       const result = await pickAssignmentFile();
-      
       if (result.success && result.file) {
         setSelectedFile(result.file);
       } else if (result.error) {
@@ -87,83 +94,139 @@ export default function SubmitAssignment() {
     setSelectedFile(null);
   };
 
-  const handleSubmit = async () => {
-    if (!selectedFile || !user || !assignment) return;
-
-    setSubmitting(true);
+  const openExistingSubmission = async () => {
+    if (!existingSubmission) return;
     try {
-      console.log('Starting submission:', { assignmentId: assignment.id, studentId: user.id, fileName: selectedFile.name });
-
-      // Read file as blob for React Native
-      const response = await fetch(selectedFile.uri);
-      if (!response.ok) {
-        throw new Error(`Failed to read file: ${response.statusText}`);
+      if (!existingSubmission.file_path && !existingSubmission.file_url) {
+        handleError(null, 'No file available');
+        return;
       }
       
-      const blob = await response.blob();
+      let fileUrl = '';
       
-      // Create unique filename
-      const fileExt = selectedFile.name.split('.').pop();
+      // Try signed URL first
+      if (existingSubmission.file_path) {
+        const { data, error } = await supabase.storage
+          .from('submissions')
+          .createSignedUrl(existingSubmission.file_path, 3600);
+        if (!error && data?.signedUrl) {
+          fileUrl = data.signedUrl;
+        }
+      }
+      
+      // Fallback to public URL
+      if (!fileUrl && existingSubmission.file_path) {
+        const { data } = supabase.storage
+          .from('submissions')
+          .getPublicUrl(existingSubmission.file_path);
+        if (data?.publicUrl) {
+          fileUrl = data.publicUrl;
+        }
+      }
+      
+      // Fallback to stored URL
+      if (!fileUrl && existingSubmission.file_url) {
+        fileUrl = existingSubmission.file_url;
+      }
+      
+      if (!fileUrl) {
+        handleError(null, 'Could not get file URL');
+        return;
+      }
+      
+      if (typeof window !== 'undefined') {
+        window.open(fileUrl, '_blank');
+      } else {
+        await Linking.openURL(fileUrl);
+      }
+    } catch (error) {
+      handleError(error, 'Failed to open file');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!selectedFile || !user || !assignment) return;
+    setSubmitting(true);
+    try {
+      let uploadPayload: any;
+      if (typeof window !== 'undefined') {
+        if (selectedFile instanceof Blob) {
+          uploadPayload = selectedFile;
+        } else if (selectedFile.file instanceof Blob) {
+          uploadPayload = selectedFile.file;
+        } else if (selectedFile.uri && (selectedFile.uri.startsWith('blob:') || selectedFile.uri.startsWith('data:'))) {
+          const response = await fetch(selectedFile.uri);
+          uploadPayload = await response.blob();
+        } else {
+          uploadPayload = selectedFile;
+        }
+      } else {
+        const response = await fetch(selectedFile.uri);
+        uploadPayload = await response.blob();
+      }
+      
+      const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';
+      const fileExt = originalName.split('.').pop() || 'pdf';
+      const mimeType = selectedFile.type || selectedFile.mimeType || (selectedFile.file && selectedFile.file.type) || 'application/pdf';
+      const fileSize = selectedFile.size || (uploadPayload && uploadPayload.size) || 0;
+      
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
       const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
 
-      console.log('Uploading to submissions bucket:', filePath);
-
-      // Upload to submissions bucket
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('submissions')
-        .upload(filePath, blob, {
-          contentType: selectedFile.mimeType || 'application/pdf',
-          upsert: false
-        });
+        .upload(filePath, uploadPayload, { contentType: mimeType, upsert: false });
 
-      if (uploadError) {
-        console.error('Upload error:', uploadError);
-        throw new Error(`Upload failed: ${uploadError.message}`);
+      if (uploadError) throw new Error(uploadError.message);
+
+      const { data: { publicUrl } } = supabase.storage.from('submissions').getPublicUrl(filePath);
+
+      const isLate = assignment.due_date ? new Date() > new Date(assignment.due_date) : false;
+      let submissionError = null;
+
+      if (existingSubmission) {
+        const { error } = await supabase
+          .from('submissions')
+          .update({
+            content: 'File submission',
+            file_path: filePath,
+            file_name: originalName,
+            file_size: fileSize,
+            file_url: publicUrl,
+            submitted_at: new Date().toISOString(),
+            status: 'submitted',
+            is_late: isLate,
+            attempt_number: (existingSubmission.attempt_number || 1) + 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingSubmission.id);
+        submissionError = error;
+      } else {
+        const { error } = await supabase
+          .from('submissions')
+          .insert({
+            assignment_id: assignment.id,
+            student_id: user.id,
+            content: 'File submission',
+            file_path: filePath,
+            file_name: originalName,
+            file_size: fileSize,
+            file_url: publicUrl,
+            submitted_at: new Date().toISOString(),
+            status: 'submitted',
+            is_late: isLate,
+            attempt_number: 1,
+          });
+        submissionError = error;
       }
-
-      console.log('Upload successful:', uploadData);
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('submissions')
-        .getPublicUrl(filePath);
-
-      console.log('Generated public URL:', publicUrl);
-
-      // Create submission record
-      const submissionData = {
-        assignment_id: assignment.id,
-        student_id: user.id,
-        content: 'File submission',
-        file_path: filePath,
-        file_name: selectedFile.name,
-        file_size: selectedFile.size,
-        file_url: publicUrl,
-        submitted_at: new Date().toISOString(),
-        status: 'submitted',
-        points_earned: null,
-        feedback: null
-      };
-
-      console.log('Creating submission record:', submissionData);
-
-      const { data: submissionResult, error: submissionError } = await supabase
-        .from('submissions')
-        .insert(submissionData)
-        .select()
-        .single();
 
       if (submissionError) {
-        console.error('Submission creation error:', submissionError);
-        // Clean up uploaded file if submission creation fails
         await supabase.storage.from('submissions').remove([filePath]);
-        throw new Error(`Failed to create submission: ${submissionError.message}`);
+        throw new Error(submissionError.message);
       }
 
-      console.log('Submission created successfully:', submissionResult);
-      showSuccess('Assignment submitted successfully!');
-      router.back();
+      showSuccess(existingSubmission ? 'Assignment resubmitted successfully!' : 'Assignment submitted successfully!');
+      handleBack();
     } catch (error) {
       console.error('Submit error:', error);
       handleError(error, 'Failed to submit assignment');
@@ -172,293 +235,267 @@ export default function SubmitAssignment() {
     }
   };
 
-  if (loading) {
-    return <LoadingSpinner />;
-  }
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/student-dashboard');
+    }
+  };
 
+  if (loading) return <LoadingSpinner />;
   if (!assignment) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text>Assignment not found</Text>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            onPress={handleBack} 
+            style={styles.backButton}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="arrow-back" size={24} color={Colors.primary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Assignment</Text>
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <Text style={{ color: Colors.text.primary, fontSize: 16 }}>Assignment not found</Text>
+          <Button title="Back to Dashboard" onPress={handleBack} style={{ marginTop: 16 }} />
+        </View>
       </SafeAreaView>
     );
   }
 
-  const isOverdue = new Date() > new Date(assignment.due_date);
+  const now = new Date();
+  const dueDate = assignment.due_date ? new Date(assignment.due_date) : null;
+  const isOverdue = dueDate && now > dueDate;
+  const hasSubmitted = !!existingSubmission;
+  const submittedBeforeDue = hasSubmitted && existingSubmission.submitted_at && 
+    new Date(existingSubmission.submitted_at) <= (dueDate || new Date());
+  const canSubmit = !isOverdue || !hasSubmitted; // Can only submit if not overdue, or if resubmitting before due
+  const daysUntilDue = dueDate 
+    ? Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    : null;
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity 
+          onPress={handleBack} 
+          style={styles.backButton}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {existingSubmission ? 'Resubmit Assignment' : 'Submit Assignment'}
-        </Text>
-        <View style={{ width: 24 }} />
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Your work</Text>
+        </View>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView style={styles.content}>
-        <Card style={styles.assignmentCard}>
-          <Text style={styles.assignmentTitle}>{assignment.title}</Text>
-          <Text style={styles.className}>{assignment.class?.name || 'No class assigned'}</Text>
-          
-          <View style={styles.detailRow}>
-            <Ionicons name="calendar" size={16} color={Colors.text.secondary} />
-            <Text style={[styles.dueDate, isOverdue && styles.overdue]}>
-              {assignment.due_date ? formatDueDate(assignment.due_date) : 'No due date'}
+        <View style={styles.assignmentHeader}>
+          <View style={styles.assignmentIcon}>
+            <Ionicons name="document-text" size={28} color={Colors.text.inverse} />
+          </View>
+          <View style={styles.assignmentInfo}>
+            <Text style={styles.assignmentTitle}>{assignment.title}</Text>
+            <Text style={styles.teacherName}>
+              {assignment.teacher?.name || 'Teacher'} • {assignment.school?.name || 'School'}
             </Text>
           </View>
+        </View>
 
-          <View style={styles.detailRow}>
-            <Ionicons name="trophy" size={16} color={Colors.text.secondary} />
-            <Text style={styles.maxScore}>Max Score: {assignment.max_score}</Text>
+        {assignment.due_date && (
+          <View style={[styles.dueBanner, isOverdue ? styles.dueBannerOverdue : 
+            (daysUntilDue !== null && daysUntilDue <= 1) ? styles.dueBannerUrgent : styles.dueBannerNormal]}>
+            <Ionicons name={isOverdue ? "alert-circle" : "time"} size={20} 
+              color={isOverdue ? Colors.error : (daysUntilDue !== null && daysUntilDue <= 1) ? Colors.warning : Colors.text.secondary} />
+            <Text style={[styles.dueText, isOverdue && styles.dueTextOverdue,
+              (daysUntilDue !== null && daysUntilDue <= 1 && !isOverdue) && styles.dueTextUrgent]}>
+              {isOverdue ? 'Missing - ' : 'Due '}{formatDueDate(assignment.due_date)}
+            </Text>
           </View>
+        )}
 
-          {assignment.instructions && (
-            <View style={styles.instructionsContainer}>
-              <Text style={styles.instructionsTitle}>Instructions:</Text>
-              <Text style={styles.instructions}>{assignment.instructions}</Text>
-            </View>
-          )}
-        </Card>
+        {assignment.instructions && (
+          <Card style={styles.instructionsCard}>
+            <Text style={styles.sectionTitle}>Instructions</Text>
+            <Text style={styles.instructionsText}>{assignment.instructions}</Text>
+          </Card>
+        )}
 
-        {/* Existing Submission Info */}
         {existingSubmission && (
-          <Card style={[styles.existingSubmissionCard, { backgroundColor: Colors.info + '10' }]}>
-            <View style={styles.existingSubmissionHeader}>
-              <Ionicons name="information-circle" size={24} color={Colors.info} />
-              <Text style={styles.existingSubmissionTitle}>Previous Submission</Text>
+          <Card style={styles.existingCard}>
+            <View style={styles.existingHeader}>
+              <View style={styles.existingStatus}>
+                <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
+                <Text style={styles.existingStatusText}>
+                  {submittedBeforeDue ? 'Turned In' : 'Turned In'}
+                </Text>
+              </View>
             </View>
-            <Text style={styles.existingSubmissionText}>
-              You submitted "{existingSubmission.file_name}" on{' '}
-              {new Date(existingSubmission.submitted_at).toLocaleDateString()}
-            </Text>
-            {existingSubmission.status === 'graded' && (
-              <Text style={styles.gradedWarning}>
-                ⚠️ This assignment has already been graded. Resubmitting will replace your graded submission.
-              </Text>
+            <TouchableOpacity style={styles.existingFile} onPress={openExistingSubmission}>
+              <View style={styles.fileIconBox}>
+                <Ionicons name="document" size={24} color={Colors.error} />
+              </View>
+              <View style={styles.fileDetails}>
+                <Text style={styles.existingFileName}>{existingSubmission.file_name}</Text>
+                <Text style={styles.existingFileDate}>
+                  Submitted {new Date(existingSubmission.submitted_at).toLocaleDateString()}
+                </Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={Colors.primary} />
+            </TouchableOpacity>
+            {existingSubmission.feedback && (
+              <View style={styles.feedbackBox}>
+                <Text style={styles.feedbackLabel}>Teacher Feedback</Text>
+                <Text style={styles.feedbackContent}>{existingSubmission.feedback}</Text>
+              </View>
             )}
           </Card>
         )}
 
         <Card style={styles.uploadCard}>
-          <Text style={styles.uploadTitle}>Upload Your Submission</Text>
-          <Text style={styles.uploadSubtitle}>Only PDF files are accepted (Max 10MB)</Text>
-
+          <Text style={styles.sectionTitle}>{existingSubmission ? 'Resubmit your work' : 'Add your work'}</Text>
+          <Text style={styles.uploadHint}>Only PDF files are accepted (Max 10MB)</Text>
           {!selectedFile ? (
-            <TouchableOpacity style={styles.uploadButton} onPress={handlePickFile}>
-              <Ionicons name="cloud-upload" size={32} color={Colors.primary} />
-              <Text style={styles.uploadButtonText}>Choose PDF File</Text>
+            <TouchableOpacity style={styles.uploadArea} onPress={handlePickFile}>
+              <View style={styles.uploadIconCircle}>
+                <Ionicons name="add" size={32} color={Colors.primary} />
+              </View>
+              <Text style={styles.uploadText}>Add attachment</Text>
+              <Text style={styles.uploadSubtext}>Tap to select a PDF file</Text>
             </TouchableOpacity>
           ) : (
-            <View style={styles.fileContainer}>
-              <View style={styles.fileInfo}>
-                <Ionicons name="document" size={24} color={Colors.primary} />
-                <View style={styles.fileDetails}>
-                  <Text style={styles.fileName}>{selectedFile.name}</Text>
-                  <Text style={styles.fileSize}>{formatFileSize(selectedFile.size)}</Text>
-                </View>
-                <TouchableOpacity onPress={handleRemoveFile}>
-                  <Ionicons name="close-circle" size={24} color={Colors.error} />
-                </TouchableOpacity>
+            <View style={styles.selectedFileCard}>
+              <View style={styles.selectedFileIcon}>
+                <Ionicons name="document" size={28} color={Colors.error} />
               </View>
+              <View style={styles.selectedFileInfo}>
+                <Text style={styles.selectedFileName} numberOfLines={1}>{selectedFile.name}</Text>
+                <Text style={styles.selectedFileSize}>{formatFileSize(selectedFile.size)}</Text>
+              </View>
+              <TouchableOpacity onPress={handleRemoveFile} style={styles.removeButton}>
+                <Ionicons name="close-circle" size={24} color={Colors.error} />
+              </TouchableOpacity>
             </View>
           )}
         </Card>
 
-        {isOverdue && (
-          <Card style={[styles.warningCard, { backgroundColor: Colors.warning + '20' }]}>
-            <View style={styles.warningContent}>
-              <Ionicons name="warning" size={24} color={Colors.warning} />
-              <Text style={styles.warningText}>
-                This assignment is overdue. Late submissions may receive reduced points.
-              </Text>
-            </View>
-          </Card>
+        {isOverdue && !existingSubmission && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="close-circle" size={20} color={Colors.error} />
+            <Text style={styles.errorText}>This assignment is overdue. Submissions are no longer accepted.</Text>
+          </View>
         )}
 
-        <Button
-          title={
-            existingSubmission 
-              ? (isOverdue ? 'Resubmit Late' : 'Resubmit Assignment')
-              : (isOverdue ? 'Submit Late' : 'Submit Assignment')
-          }
-          onPress={handleSubmit}
-          loading={submitting}
-          disabled={!selectedFile || submitting}
-          style={styles.submitButton}
-        />
+        {existingSubmission && isOverdue && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="close-circle" size={20} color={Colors.error} />
+            <Text style={styles.errorText}>Resubmission is not allowed after the due date.</Text>
+          </View>
+        )}
+
+        {!isOverdue && (
+          <Button
+            title={existingSubmission ? 'Resubmit' : 'Turn in'}
+            onPress={handleSubmit}
+            loading={submitting}
+            disabled={!selectedFile || submitting}
+            style={styles.submitButton}
+          />
+        )}
+        <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: Spacing.lg,
-    backgroundColor: Colors.card.background,
+    flexDirection: 'row', alignItems: 'center', padding: Spacing.lg,
+    backgroundColor: Colors.card.background, borderBottomWidth: 1, borderBottomColor: Colors.border.light,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.text.primary,
+  backButton: { padding: Spacing.xs },
+  headerContent: { flex: 1, marginLeft: Spacing.md },
+  headerTitle: { fontSize: 20, fontWeight: 'bold', color: Colors.text.primary },
+  content: { flex: 1 },
+  assignmentHeader: {
+    flexDirection: 'row', alignItems: 'center', padding: Spacing.lg, backgroundColor: Colors.card.background,
   },
-  content: {
-    flex: 1,
-    padding: Spacing.lg,
+  assignmentIcon: {
+    width: 48, height: 48, borderRadius: 24, backgroundColor: Colors.primary,
+    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
   },
-  assignmentCard: {
-    marginBottom: Spacing.lg,
+  assignmentInfo: { flex: 1 },
+  assignmentTitle: { fontSize: 18, fontWeight: '600', color: Colors.text.primary },
+  teacherName: { fontSize: 14, color: Colors.text.secondary, marginTop: 4 },
+  dueBanner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md },
+  dueBannerNormal: { backgroundColor: Colors.background },
+  dueBannerUrgent: { backgroundColor: Colors.warning + '15' },
+  dueBannerOverdue: { backgroundColor: Colors.error + '15' },
+  dueText: { fontSize: 14, color: Colors.text.secondary, marginLeft: Spacing.sm },
+  dueTextUrgent: { color: Colors.warning, fontWeight: '500' },
+  dueTextOverdue: { color: Colors.error, fontWeight: '500' },
+  instructionsCard: { margin: Spacing.md },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: Colors.text.primary, marginBottom: Spacing.sm },
+  instructionsText: { fontSize: 14, color: Colors.text.secondary, lineHeight: 22 },
+  existingCard: { margin: Spacing.md, borderLeftWidth: 4, borderLeftColor: Colors.success },
+  existingHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md },
+  existingStatus: { flexDirection: 'row', alignItems: 'center' },
+  existingStatusText: { fontSize: 16, fontWeight: '600', color: Colors.text.primary, marginLeft: Spacing.sm },
+
+  existingFile: {
+    flexDirection: 'row', alignItems: 'center', padding: Spacing.md,
+    backgroundColor: Colors.background, borderRadius: 8,
   },
-  assignmentTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.text.primary,
-    marginBottom: Spacing.xs,
+  fileIconBox: {
+    width: 40, height: 40, borderRadius: 8, backgroundColor: Colors.error + '15',
+    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
   },
-  className: {
-    fontSize: 14,
-    color: Colors.text.secondary,
-    marginBottom: Spacing.md,
+  fileDetails: { flex: 1 },
+  existingFileName: { fontSize: 14, fontWeight: '500', color: Colors.text.primary },
+  existingFileDate: { fontSize: 12, color: Colors.text.secondary, marginTop: 2 },
+  feedbackBox: { marginTop: Spacing.md, padding: Spacing.md, backgroundColor: Colors.info + '10', borderRadius: 8 },
+  feedbackLabel: { fontSize: 12, fontWeight: '600', color: Colors.info, marginBottom: Spacing.xs },
+  feedbackContent: { fontSize: 14, color: Colors.text.primary, lineHeight: 20 },
+  uploadCard: { margin: Spacing.md },
+  uploadHint: { fontSize: 12, color: Colors.text.tertiary, marginBottom: Spacing.md },
+  uploadArea: {
+    alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xxxl,
+    borderWidth: 2, borderColor: Colors.border.medium, borderStyle: 'dashed', borderRadius: 12, backgroundColor: Colors.background,
   },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Spacing.sm,
+  uploadIconCircle: {
+    width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.primary + '15',
+    justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.md,
   },
-  dueDate: {
-    fontSize: 14,
-    color: Colors.text.secondary,
-    marginLeft: Spacing.sm,
+  uploadText: { fontSize: 16, fontWeight: '600', color: Colors.primary },
+  uploadSubtext: { fontSize: 12, color: Colors.text.tertiary, marginTop: 4 },
+  selectedFileCard: {
+    flexDirection: 'row', alignItems: 'center', padding: Spacing.md,
+    backgroundColor: Colors.background, borderRadius: 12, borderWidth: 1, borderColor: Colors.success,
   },
-  overdue: {
-    color: Colors.error,
-    fontWeight: '600',
+  selectedFileIcon: {
+    width: 48, height: 48, borderRadius: 8, backgroundColor: Colors.error + '15',
+    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
   },
-  maxScore: {
-    fontSize: 14,
-    color: Colors.text.secondary,
-    marginLeft: Spacing.sm,
+  selectedFileInfo: { flex: 1 },
+  selectedFileName: { fontSize: 14, fontWeight: '600', color: Colors.text.primary },
+  selectedFileSize: { fontSize: 12, color: Colors.text.secondary, marginTop: 2 },
+  removeButton: { padding: Spacing.xs },
+  warningBanner: {
+    flexDirection: 'row', alignItems: 'center', margin: Spacing.md, padding: Spacing.md,
+    backgroundColor: Colors.warning + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.warning,
   },
-  instructionsContainer: {
-    marginTop: Spacing.md,
-    padding: Spacing.md,
-    backgroundColor: Colors.background,
-    borderRadius: 8,
+  warningText: { flex: 1, fontSize: 14, color: Colors.warning, marginLeft: Spacing.sm, fontWeight: '500' },
+  errorBanner: {
+    flexDirection: 'row', alignItems: 'center', margin: Spacing.md, padding: Spacing.md,
+    backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
   },
-  instructionsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text.primary,
-    marginBottom: Spacing.sm,
-  },
-  instructions: {
-    fontSize: 14,
-    color: Colors.text.secondary,
-    lineHeight: 20,
-  },
-  existingSubmissionCard: {
-    marginBottom: Spacing.lg,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.info,
-  },
-  existingSubmissionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Spacing.sm,
-  },
-  existingSubmissionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.info,
-    marginLeft: Spacing.sm,
-  },
-  existingSubmissionText: {
-    fontSize: 14,
-    color: Colors.text.primary,
-    marginBottom: Spacing.sm,
-  },
-  gradedWarning: {
-    fontSize: 12,
-    color: Colors.warning,
-    fontWeight: '500',
-  },
-  uploadCard: {
-    marginBottom: Spacing.lg,
-  },
-  uploadTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.text.primary,
-    marginBottom: Spacing.xs,
-  },
-  uploadSubtitle: {
-    fontSize: 14,
-    color: Colors.text.secondary,
-    marginBottom: Spacing.lg,
-  },
-  uploadButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: Spacing.xxxl,
-    borderWidth: 2,
-    borderColor: Colors.primary,
-    borderStyle: 'dashed',
-    borderRadius: 12,
-  },
-  uploadButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.primary,
-    marginTop: Spacing.sm,
-  },
-  fileContainer: {
-    padding: Spacing.md,
-    backgroundColor: Colors.background,
-    borderRadius: 8,
-  },
-  fileInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  fileDetails: {
-    flex: 1,
-    marginLeft: Spacing.md,
-  },
-  fileName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text.primary,
-  },
-  fileSize: {
-    fontSize: 12,
-    color: Colors.text.secondary,
-  },
-  warningCard: {
-    marginBottom: Spacing.lg,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.warning,
-  },
-  warningContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 14,
-    color: Colors.warning,
-    marginLeft: Spacing.md,
-    fontWeight: '500',
-  },
-  submitButton: {
-    marginBottom: Spacing.xl,
-  },
+  errorText: { flex: 1, fontSize: 14, color: Colors.error, marginLeft: Spacing.sm, fontWeight: '500' },
+  submitButton: { marginHorizontal: Spacing.md, marginTop: Spacing.md },
+  bottomSpacer: { height: Spacing.xxxl },
 });

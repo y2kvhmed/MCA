@@ -44,36 +44,59 @@ export function isValidEmail(email: string): boolean {
   return emailRegex.test(email);
 }
 
-// Format date relative to now
+// Format date/time displaying exact time
 export function formatRelativeDate(dateString: string): string {
+  if (!dateString) return '';
   const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+  if (isNaN(date.getTime())) return '';
 
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-  if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-  
-  return date.toLocaleDateString();
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  if (isToday) {
+    return timeStr;
+  }
+
+  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `${dateStr}, ${timeStr}`;
 }
 
-// Format due date countdown
+// Format standard date
+export function formatDate(dateString: string): string {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Format due date countdown including time
 export function formatDueDate(dueDateString: string): string {
+  if (!dueDateString) return 'No due date';
   const dueDate = new Date(dueDateString);
+  if (isNaN(dueDate.getTime())) return 'Invalid date';
+
   const now = new Date();
   const diffMs = dueDate.getTime() - now.getTime();
   const diffDays = Math.ceil(diffMs / 86400000);
 
-  if (diffDays < 0) return 'Overdue';
-  if (diffDays === 0) return 'Due today';
-  if (diffDays === 1) return 'Due tomorrow';
-  if (diffDays < 7) return `Due in ${diffDays} days`;
+  const timeStr = dueDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+  const dateStr = dueDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+  if (diffMs < 0) {
+    return `Overdue (was due ${dateStr} at ${timeStr})`;
+  }
+  if (diffDays === 0) {
+    return `Due today at ${timeStr}`;
+  }
+  if (diffDays === 1) {
+    return `Due tomorrow at ${timeStr}`;
+  }
+  if (diffDays < 7) {
+    return `Due in ${diffDays} days (${dateStr} at ${timeStr})`;
+  }
   
-  return `Due ${dueDate.toLocaleDateString()}`;
+  return `Due ${dateStr} at ${timeStr}`;
 }
 
 // Format file size in human readable format

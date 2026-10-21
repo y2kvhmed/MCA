@@ -63,7 +63,7 @@ export default function StudentAssignments() {
     }
   };
 
-  const getAssignmentStatus = (assignment: any) => {
+  const getAssignmentStatus = (assignment: any): { status: string; color: string; icon: keyof typeof Ionicons.glyphMap } => {
     if (!assignment.submissions || assignment.submissions.length === 0) {
       return { status: 'pending', color: Colors.warning, icon: 'time' };
     }
@@ -84,12 +84,20 @@ export default function StudentAssignments() {
     return <LoadingSpinner />;
   }
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/student-dashboard');
+    }
+  };
+
   const filteredAssignments = getFilteredAssignments();
 
   return (
     <SafeAreaView style={styles.container}>
       <FadeInView style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack} style={{ padding: 4 }}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Assignments</Text>
@@ -168,11 +176,6 @@ export default function StudentAssignments() {
                           </Text>
                         </View>
                       )}
-                      
-                      <View style={styles.metaItem}>
-                        <Ionicons name="trophy" size={14} color={Colors.text.secondary} />
-                        <Text style={styles.metaText}>Max: {assignment.max_score}</Text>
-                      </View>
                     </View>
                   </View>
                   

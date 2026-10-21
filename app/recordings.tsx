@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
+import { supabase } from '../lib/supabase';
 import { getLessonsForStudent, getAllLessons, getLessonsBySchool, deleteLesson } from '../lib/database';
 import { 
   getRecordingDependencies, 
@@ -13,7 +14,7 @@ import {
 import { formatRelativeDate, handleError } from '../lib/utils';
 import AnimatedCard from '../components/AnimatedCard';
 import FadeInView from '../components/FadeInView';
-import NativeVideoPlayer from '../components/NativeVideoPlayer';
+import SecureVideoPlayer from '../components/SecureVideoPlayer';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 import RecordingDeleteDialog from '../components/RecordingDeleteDialog';
@@ -50,34 +51,63 @@ export default function Recordings() {
       
       setUser(currentUser);
 
-      // Load recordings/lessons based on user role and school
-      let lessonsData;
-      if (currentUser.role === 'admin') {
-        // Admin can see all lessons
-        const result = await getAllLessons();
-        lessonsData = result.data;
-      } else if (currentUser.role === 'teacher') {
-        // Teachers see lessons from their school
-        if (currentUser.school_id) {
-          const result = await getLessonsBySchool(currentUser.school_id);
-          lessonsData = result.data;
-        } else {
-          // If teacher has no school, show empty
-          lessonsData = [];
+      // Load recordings/lessons based on user role and school with strict isolation
+      let lessonsData: any[] = [];
+      try {
+        if (currentUser.role === 'admin') {
+          // Admin can see all lessons
+          const result = await getAllLessons();
+          lessonsData = result.data || [];
+        } else if (currentUser.role === 'teacher') {
+          const { getTeacherSchools } = await import('../lib/database');
+          const { data: teacherSchools } = await getTeacherSchools(currentUser.id);
+          const schoolIds = (teacherSchools || []).map((s: any) => s.id);
+          if (currentUser.school_id && !schoolIds.includes(currentUser.school_id)) {
+            schoolIds.push(currentUser.school_id);
+          }
+          if (schoolIds.length > 0) {
+            const { data, error } = await supabase
+              .from('lessons')
+              .select(`
+                *,
+                school:schools(id, name),
+                teacher:app_users!lessons_teacher_id_fkey(id, name)
+              `)
+              .in('school_id', schoolIds)
+              .is('deleted_at', null)
+              .order('created_at', { ascending: false });
+            lessonsData = data || [];
+          } else {
+            lessonsData = [];
+          }
+        } else if (currentUser.role === 'student') {
+          if (currentUser.school_id) {
+            const { data, error } = await supabase
+              .from('lessons')
+              .select(`
+                *,
+                school:schools(id, name),
+                teacher:app_users!lessons_teacher_id_fkey(id, name)
+              `)
+              .eq('school_id', currentUser.school_id)
+              .is('deleted_at', null)
+              .order('created_at', { ascending: false });
+            lessonsData = data || [];
+          } else {
+            lessonsData = [];
+          }
         }
-      } else {
-        // Students see lessons from their school
-        const result = await getLessonsForStudent(currentUser.id);
-        lessonsData = result.data;
-      }
-      
-      if (lessonsData) {
-        // Filter for video lessons only
-        const videoLessons = lessonsData.filter((lesson: any) => 
-          lesson.video_url || lesson.video_path
+        
+        // Filter for video lessons only (check both video_url and video_path)
+        const videoLessons = (lessonsData || []).filter((lesson: any) => 
+          (lesson.video_url && lesson.video_url.trim() !== '') || 
+          (lesson.video_path && lesson.video_path.trim() !== '')
         );
         setRecordings(videoLessons);
-      } else {
+        
+        console.log(`Loaded ${videoLessons.length} recordings from ${lessonsData.length} total lessons`);
+      } catch (lessonsError) {
+        console.error('Error loading lessons:', lessonsError);
         setRecordings([]);
       }
     } catch (error) {
@@ -150,7 +180,13 @@ export default function Recordings() {
   return (
     <SafeAreaView style={styles.container}>
       <FadeInView style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.push('/');
+          }
+        }}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Physics Recordings</Text>
@@ -195,53 +231,14 @@ export default function Recordings() {
           </View>
         ) : (
           <>
-            <FadeInView style={styles.statsContainer}>
-              <View style={styles.statItem}>
-                <Ionicons name="videocam" size={24} color={Colors.primary} />
-                <Text style={styles.statValue}>{recordings.length}</Text>
-                <Text style={styles.statLabel}>Available</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Ionicons name="time" size={24} color={Colors.info} />
-                <Text style={styles.statValue}>
-                  {recordings.reduce((total, r) => total + (r.duration_minutes || 0), 0)}
-                </Text>
-                <Text style={styles.statLabel}>Total Minutes</Text>
-              </View>
-              {user && (user.role === 'teacher' || user.role === 'admin') && (
-                <View style={styles.statItem}>
-                  <Ionicons name="settings" size={24} color={Colors.success} />
-                  <Text style={styles.statValue}>✓</Text>
-                  <Text style={styles.statLabel}>Can Manage</Text>
-                </View>
-              )}
-            </FadeInView>
-
             {recordings.map((recording, index) => (
-              <AnimatedCard key={recording.id} delay={100 * (index + 1)} style={styles.recordingCard}>
+              <AnimatedCard key={recording.id} delay={Math.min(50 * (index + 1), 300)} style={styles.recordingCard}>
                 <View style={styles.recordingHeader}>
                   <View style={styles.recordingInfo}>
                     <Text style={styles.recordingTitle}>{recording.title}</Text>
                     {recording.school && (
                       <Text style={styles.recordingClass}>{recording.school.name}</Text>
                     )}
-                    {recording.teacher && (
-                      <Text style={styles.recordingTeacher}>by {recording.teacher.name}</Text>
-                    )}
-                    <View style={styles.recordingMeta}>
-                      <View style={styles.metaItem}>
-                        <Ionicons name="calendar" size={14} color={Colors.text.secondary} />
-                        <Text style={styles.metaText}>
-                          {formatRelativeDate(recording.created_at)}
-                        </Text>
-                      </View>
-                      {recording.duration_minutes && (
-                        <View style={styles.metaItem}>
-                          <Ionicons name="time" size={14} color={Colors.text.secondary} />
-                          <Text style={styles.metaText}>{recording.duration_minutes} min</Text>
-                        </View>
-                      )}
-                    </View>
                   </View>
                   
                   {/* Management Actions */}
@@ -275,7 +272,7 @@ export default function Recordings() {
                 {/* Video Player */}
                 {(recording.video_url || recording.video_path) && (
                   <View style={styles.videoContainer}>
-                    <NativeVideoPlayer 
+                    <SecureVideoPlayer 
                       videoPath={recording.video_path || recording.video_url}
                       title={recording.title}
                     />
@@ -414,10 +411,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    boxShadow: '0px 2px 4px rgba(0,0,0,0.1)',
     elevation: 3,
   },
   createButtonText: {

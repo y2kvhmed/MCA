@@ -20,6 +20,7 @@ interface AssignmentProgress {
   created_at: string;
   status: 'submitted' | 'missing';
   submitted_at?: string;
+  feedback?: string;
 }
 
 export default function StudentGrades() {
@@ -41,21 +42,30 @@ export default function StudentGrades() {
   const loadData = async () => {
     try {
       const currentUser = await getCurrentUser();
+      if (!currentUser) {
+        router.replace('/login');
+        return;
+      }
       setUser(currentUser);
 
-      // Load all assignments for student's school
-      const { data: assignmentsData, error: assignmentsError } = await supabase
+      // Load all assignments for student's school or global
+      let assignmentsQuery = supabase
         .from('assignments')
         .select('*')
-        .eq('school_id', currentUser.school_id)
         .order('due_date', { ascending: false });
+
+      if (currentUser.school_id) {
+        assignmentsQuery = assignmentsQuery.or(`school_id.eq.${currentUser.school_id},school_id.is.null`);
+      }
+
+      const { data: assignmentsData, error: assignmentsError } = await assignmentsQuery;
 
       if (assignmentsError) throw assignmentsError;
 
-      // Load student's submissions
+      // Load student's submissions with grades
       const { data: submissionsData, error: submissionsError } = await supabase
         .from('submissions')
-        .select('assignment_id, submitted_at')
+        .select('assignment_id, submitted_at, grade, percentage, feedback, status')
         .eq('student_id', currentUser.id);
 
       if (submissionsError) throw submissionsError;
@@ -63,31 +73,36 @@ export default function StudentGrades() {
       // Create a map of submitted assignments
       const submittedMap = new Map();
       submissionsData?.forEach(sub => {
-        submittedMap.set(sub.assignment_id, sub.submitted_at);
+        submittedMap.set(sub.assignment_id, sub);
       });
 
       // Combine data
-      const progressData: AssignmentProgress[] = (assignmentsData || []).map(assignment => ({
-        id: assignment.id,
-        title: assignment.title,
-        description: assignment.description,
-        due_date: assignment.due_date,
-        created_at: assignment.created_at,
-        status: submittedMap.has(assignment.id) ? 'submitted' : 'missing',
-        submitted_at: submittedMap.get(assignment.id),
-      }));
+      const progressData: AssignmentProgress[] = (assignmentsData || []).map(assignment => {
+        const submission = submittedMap.get(assignment.id);
+        const status: 'submitted' | 'missing' = submission ? 'submitted' : 'missing';
+        return {
+          id: assignment.id,
+          title: assignment.title,
+          description: assignment.description,
+          due_date: assignment.due_date,
+          created_at: assignment.created_at,
+          status,
+          submitted_at: submission?.submitted_at,
+          feedback: submission?.feedback,
+        };
+      });
 
       setAssignments(progressData);
 
       // Calculate statistics
       const total = progressData.length;
-      const submitted = progressData.filter(a => a.status === 'submitted').length;
-      const missing = total - submitted;
-      const percentage = total > 0 ? Math.round((submitted / total) * 100) : 0;
+      const completed = progressData.filter(a => a.status === 'submitted').length;
+      const missing = progressData.filter(a => a.status === 'missing').length;
+      const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
 
       setStats({
         totalAssignments: total,
-        submittedAssignments: submitted,
+        submittedAssignments: completed,
         missingAssignments: missing,
         completionPercentage: percentage,
       });
@@ -100,11 +115,13 @@ export default function StudentGrades() {
   };
 
   const getStatusColor = (status: string) => {
-    return status === 'submitted' ? Colors.success : Colors.error;
+    if (status === 'submitted') return Colors.success;
+    return Colors.error;
   };
 
-  const getStatusIcon = (status: string) => {
-    return status === 'submitted' ? 'checkmark-circle' : 'close-circle';
+  const getStatusIcon = (status: string): keyof typeof Ionicons.glyphMap => {
+    if (status === 'submitted') return 'checkmark-circle';
+    return 'close-circle';
   };
 
   const isOverdue = (dueDate: string) => {
@@ -387,6 +404,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: Spacing.xs,
   },
+
   submitButton: {
     flexDirection: 'row',
     alignItems: 'center',

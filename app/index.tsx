@@ -17,6 +17,15 @@ export default function Index() {
       
       const user = await getCurrentUser();
       if (user && user.is_active) {
+        if (user.role !== 'admin') {
+          const { checkMaintenanceStatus } = await import('../lib/auth');
+          const maint = await checkMaintenanceStatus(user.role);
+          if (maint.isMaintenance) {
+            router.replace('/welcome');
+            return;
+          }
+        }
+
         // Navigate based on role
         switch (user.role) {
           case 'admin':

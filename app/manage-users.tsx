@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getUsersBySchool, updateUserPassword } from '../lib/database';
+import { getUsersBySchool, updateUserPassword, deleteUser } from '../lib/database';
+import { supabase } from '../lib/supabase';
 import { handleError } from '../lib/utils';
 import Card from '../components/Card';
 import Input from '../components/Input';
@@ -21,7 +22,6 @@ export default function ManageUsers() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingUser, setEditingUser] = useState<any>(null);
-  const [newPassword, setNewPassword] = useState('');
   const [newEmail, setNewEmail] = useState('');
 
   useEffect(() => {
@@ -42,7 +42,32 @@ export default function ManageUsers() {
       // Load all users except admins
       const { data: usersData } = await getUsersBySchool(null, true); // true = exclude admins
       if (usersData) {
-        setUsers(usersData);
+        const teacherIds = usersData.filter(u => u.role === 'teacher').map(u => u.id);
+        if (teacherIds.length > 0) {
+          const { data: tsData } = await supabase
+            .from('teacher_schools')
+            .select('teacher_id, schools(id, name)')
+            .in('teacher_id', teacherIds);
+
+          if (tsData && tsData.length > 0) {
+            const map: Record<string, string[]> = {};
+            tsData.forEach((ts: any) => {
+              if (ts.schools?.name) {
+                if (!map[ts.teacher_id]) map[ts.teacher_id] = [];
+                map[ts.teacher_id].push(ts.schools.name);
+              }
+            });
+            const enriched = usersData.map(u => {
+              if (u.role === 'teacher' && map[u.id] && map[u.id].length > 0) {
+                return { ...u, schoolDisplay: map[u.id].join(', ') };
+              }
+              return { ...u, schoolDisplay: u.school?.name || 'No School' };
+            });
+            setUsers(enriched);
+            return;
+          }
+        }
+        setUsers(usersData.map(u => ({ ...u, schoolDisplay: u.school?.name || 'No School' })));
       }
     } catch (error) {
       console.error('Load data error:', error);
@@ -55,7 +80,46 @@ export default function ManageUsers() {
   const handleEditUser = (userToEdit: any) => {
     setEditingUser(userToEdit);
     setNewEmail(userToEdit.email);
-    setNewPassword('');
+  };
+
+  const confirmDeleteUser = (userItem: any) => {
+    if (user?.id === userItem.id) {
+      showError('Security restriction: You cannot delete your own account.');
+      return;
+    }
+
+    const doDelete = async () => {
+      try {
+        setLoading(true);
+        const { error } = await deleteUser(userItem.id);
+        if (error) throw error;
+        showSuccess(`User "${userItem.name}" deleted successfully`);
+        if (editingUser?.id === userItem.id) {
+          setEditingUser(null);
+          setNewEmail('');
+        }
+        await loadData();
+      } catch (err: any) {
+        console.error('Delete user error:', err);
+        handleError(err, 'Failed to delete user');
+        setLoading(false);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Are you sure you want to permanently delete "${userItem.name}" (${userItem.email})? This action cannot be undone.`)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete User',
+        `Are you sure you want to delete ${userItem.name}? This action cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: doDelete },
+        ]
+      );
+    }
   };
 
   const handleSaveChanges = async () => {
@@ -66,10 +130,6 @@ export default function ManageUsers() {
       
       if (newEmail !== editingUser.email) {
         updates.email = newEmail;
-      }
-      
-      if (newPassword.trim()) {
-        updates.password = newPassword;
       }
 
       if (Object.keys(updates).length === 0) {
@@ -85,7 +145,6 @@ export default function ManageUsers() {
 
       showSuccess('User updated successfully');
       setEditingUser(null);
-      setNewPassword('');
       setNewEmail('');
       loadData();
     } catch (error) {
@@ -96,7 +155,6 @@ export default function ManageUsers() {
 
   const handleCancel = () => {
     setEditingUser(null);
-    setNewPassword('');
     setNewEmail('');
   };
 
@@ -125,14 +183,6 @@ export default function ManageUsers() {
               onChangeText={setNewEmail}
               keyboardType="email-address"
               autoCapitalize="none"
-            />
-            
-            <Input
-              label="New Password (leave empty to keep current)"
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-              placeholder="Enter new password"
             />
             
             <View style={styles.editActions}>
@@ -168,16 +218,33 @@ export default function ManageUsers() {
                 <Text style={styles.userName}>{userItem.name}</Text>
                 <Text style={styles.userEmail}>{userItem.email}</Text>
                 <Text style={styles.userRole}>
-                  {userItem.role} • {userItem.school?.name || 'No School'}
+                  {userItem.role} • {userItem.schoolDisplay || userItem.school?.name || 'No School'}
                 </Text>
               </View>
               
-              <TouchableOpacity
-                style={styles.editUserButton}
-                onPress={() => handleEditUser(userItem)}
-              >
-                <Ionicons name="create" size={20} color={Colors.primary} />
-              </TouchableOpacity>
+              <View style={styles.userActions}>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => handleEditUser(userItem)}
+                  accessibilityLabel="Edit User"
+                >
+                  <Ionicons name="create-outline" size={20} color={Colors.primary} />
+                </TouchableOpacity>
+
+                {user?.id === userItem.id ? (
+                  <View style={styles.selfBadge}>
+                    <Text style={styles.selfBadgeText}>You</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.deleteButton]}
+                    onPress={() => confirmDeleteUser(userItem)}
+                    accessibilityLabel="Delete User"
+                  >
+                    <Ionicons name="trash-outline" size={20} color={Colors.error} />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           ))}
         </Card>
@@ -268,7 +335,32 @@ const styles = StyleSheet.create({
     color: Colors.text.tertiary,
     marginTop: 2,
   },
-  editUserButton: {
+  userActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  actionButton: {
     padding: Spacing.sm,
+    borderRadius: 8,
+    backgroundColor: Colors.card.background,
+  },
+  deleteButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  selfBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+  },
+  selfBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 });

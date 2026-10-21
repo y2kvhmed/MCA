@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 import { supabase } from '../lib/supabase';
 
-const { width } = Dimensions.get('window');
+// Video player component with native controls
 
 interface NativeVideoPlayerProps {
   videoPath: string; // Supabase storage path
@@ -23,10 +23,7 @@ export default function NativeVideoPlayer({
   showControls = true,
   poster
 }: NativeVideoPlayerProps) {
-  const [status, setStatus] = useState<AVPlaybackStatus>({} as AVPlaybackStatus);
   const [showPlayer, setShowPlayer] = useState(autoplay);
-  const [isPlaying, setIsPlaying] = useState(autoplay);
-  const [showCustomControls, setShowCustomControls] = useState(false);
   const [videoUri, setVideoUri] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
@@ -41,21 +38,86 @@ export default function NativeVideoPlayer({
       setLoading(true);
       setError('');
       
-      // Get signed URL from Supabase storage (expires in 1 hour)
-      const { data, error } = await supabase.storage
-        .from('videos')
-        .createSignedUrl(videoPath, 3600); // 1 hour expiry
+      console.log('Loading video from path:', videoPath);
       
-      if (error) {
-        console.error('Error getting video URL:', error);
-        setError('Failed to load video');
+      // If it's already a full URL, use it directly
+      if (videoPath.startsWith('http://') || videoPath.startsWith('https://')) {
+        setVideoUri(videoPath);
         setLoading(false);
         return;
       }
       
-      if (data?.signedUrl) {
-        setVideoUri(data.signedUrl);
+      // The video is stored in 'videos' bucket with path like 'recordings/global/filename.mp4'
+      // or 'recordings/schoolId/filename.mp4'
+      
+      // First, try the videos bucket with the exact path (most common case)
+      console.log('Trying videos bucket with path:', videoPath);
+      const { data: videosData, error: videosError } = await supabase.storage
+        .from('videos')
+        .createSignedUrl(videoPath, 3600);
+      
+      if (!videosError && videosData?.signedUrl) {
+        console.log('Found video in videos bucket');
+        setVideoUri(videosData.signedUrl);
+        setLoading(false);
+        return;
       }
+      
+      // Try public URL from videos bucket
+      const { data: publicData } = supabase.storage
+        .from('videos')
+        .getPublicUrl(videoPath);
+      
+      if (publicData?.publicUrl) {
+        // Test if the public URL works
+        try {
+          const testResponse = await fetch(publicData.publicUrl, { method: 'HEAD' });
+          if (testResponse.ok) {
+            console.log('Using public URL from videos bucket');
+            setVideoUri(publicData.publicUrl);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.log('Public URL test failed, trying other methods');
+        }
+      }
+      
+      // Try other buckets as fallback
+      const bucketsToTry = ['recordings', 'lessons'];
+      
+      for (const bucket of bucketsToTry) {
+        console.log('Trying bucket:', bucket, 'path:', videoPath);
+        
+        const { data, error } = await supabase.storage
+          .from(bucket)
+          .createSignedUrl(videoPath, 3600);
+        
+        if (!error && data?.signedUrl) {
+          console.log('Found video in bucket:', bucket);
+          setVideoUri(data.signedUrl);
+          setLoading(false);
+          return;
+        }
+        
+        // Try without 'recordings/' prefix if path starts with it
+        if (videoPath.startsWith('recordings/')) {
+          const pathWithoutPrefix = videoPath.replace('recordings/', '');
+          const { data: data2, error: error2 } = await supabase.storage
+            .from(bucket)
+            .createSignedUrl(pathWithoutPrefix, 3600);
+          
+          if (!error2 && data2?.signedUrl) {
+            console.log('Found video in bucket with modified path:', bucket);
+            setVideoUri(data2.signedUrl);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+      
+      console.error('Video not found in any bucket. Path:', videoPath);
+      setError('Video not found');
       setLoading(false);
     } catch (error) {
       console.error('Error loading video:', error);
@@ -64,41 +126,13 @@ export default function NativeVideoPlayer({
     }
   };
 
-  const formatTime = (milliseconds: number): string => {
-    const totalSeconds = Math.floor(milliseconds / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  const handlePlayPause = async () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        await videoRef.current.pauseAsync();
-      } else {
-        await videoRef.current.playAsync();
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  const handleSeek = async (position: number) => {
-    if (videoRef.current && 'durationMillis' in status && status.durationMillis) {
-      const seekPosition = (position / 100) * status.durationMillis;
-      await videoRef.current.setPositionAsync(seekPosition);
-    }
-  };
-
   const toggleFullscreen = async () => {
-    if (videoRef.current) {
-      await videoRef.current.presentFullscreenPlayer();
-    }
-  };
-
-  const onPlaybackStatusUpdate = (playbackStatus: AVPlaybackStatus) => {
-    setStatus(playbackStatus);
-    if ('isPlaying' in playbackStatus) {
-      setIsPlaying(playbackStatus.isPlaying);
+    try {
+      if (videoRef.current) {
+        await videoRef.current.presentFullscreenPlayer();
+      }
+    } catch (error) {
+      console.error('Error entering fullscreen:', error);
     }
   };
 
@@ -106,7 +140,8 @@ export default function NativeVideoPlayer({
     return (
       <View style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading secure video...</Text>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={styles.loadingText}>Loading video...</Text>
         </View>
       </View>
     );
@@ -156,11 +191,6 @@ export default function NativeVideoPlayer({
     );
   }
 
-  const progressPercentage = 
-    'durationMillis' in status && 'positionMillis' in status && status.durationMillis
-      ? (status.positionMillis / status.durationMillis) * 100
-      : 0;
-
   return (
     <View style={styles.container}>
       {title && (
@@ -175,75 +205,31 @@ export default function NativeVideoPlayer({
         </View>
       )}
       
-      <TouchableOpacity 
-        style={styles.playerContainer}
-        onPress={() => setShowCustomControls(!showCustomControls)}
-        activeOpacity={1}
-      >
+      <View style={styles.playerContainer}>
         <Video
           ref={videoRef}
           style={styles.video}
           source={{ uri: videoUri }}
-          useNativeControls={!showControls}
+          useNativeControls={true}
           resizeMode={ResizeMode.CONTAIN}
           shouldPlay={autoplay}
           isLooping={false}
-          onPlaybackStatusUpdate={onPlaybackStatusUpdate}
           posterSource={poster ? { uri: poster } : undefined}
           usePoster={!!poster}
+          videoStyle={{ backgroundColor: '#000' }}
+          onFullscreenUpdate={(event) => {
+            console.log('Fullscreen update:', event.fullscreenUpdate);
+          }}
         />
         
-        {showControls && showCustomControls && (
-          <View style={styles.customControls}>
-            <View style={styles.controlsOverlay}>
-              {/* Play/Pause Button */}
-              <TouchableOpacity 
-                style={styles.playPauseButton}
-                onPress={handlePlayPause}
-              >
-                <Ionicons 
-                  name={isPlaying ? "pause" : "play"} 
-                  size={32} 
-                  color={Colors.text.inverse} 
-                />
-              </TouchableOpacity>
-              
-              {/* Fullscreen Button */}
-              <TouchableOpacity 
-                style={styles.fullscreenButton}
-                onPress={toggleFullscreen}
-              >
-                <Ionicons name="expand" size={24} color={Colors.text.inverse} />
-              </TouchableOpacity>
-            </View>
-            
-            {/* Progress Bar */}
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBar}>
-                <View 
-                  style={[styles.progressFill, { width: `${progressPercentage}%` }]} 
-                />
-                <View
-                  style={[styles.progressThumb, { left: `${progressPercentage}%` }]}
-                />
-              </View>
-              
-              {/* Time Display */}
-              <View style={styles.timeContainer}>
-                <Text style={styles.timeText}>
-                  {'positionMillis' in status ? formatTime(status.positionMillis) : '0:00'}
-                </Text>
-                <Text style={styles.timeText}>
-                  {'durationMillis' in status && status.durationMillis 
-                    ? formatTime(status.durationMillis) 
-                    : '0:00'
-                  }
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-      </TouchableOpacity>
+        {/* Fullscreen button overlay */}
+        <TouchableOpacity 
+          style={styles.fullscreenOverlay}
+          onPress={toggleFullscreen}
+        >
+          <Ionicons name="expand" size={20} color={Colors.text.inverse} />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -273,8 +259,8 @@ const styles = StyleSheet.create({
   },
   thumbnail: {
     width: '100%',
-    height: 200,
-    backgroundColor: '#000',
+    height: 220,
+    backgroundColor: '#1a1a2e',
     borderRadius: 12,
     overflow: 'hidden',
     position: 'relative',
@@ -284,15 +270,20 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   playButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   titleContainer: {
     position: 'absolute',
@@ -303,107 +294,66 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
   },
   playerContainer: {
-    height: 220,
+    width: '100%',
+    aspectRatio: 16 / 9,
     backgroundColor: '#000',
     position: 'relative',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   video: {
     flex: 1,
+    backgroundColor: '#000',
   },
-  customControls: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  controlsOverlay: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-  },
-  playPauseButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  fullscreenButton: {
+  fullscreenOverlay: {
+    position: 'absolute',
+    top: Spacing.md,
+    right: Spacing.md,
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  progressContainer: {
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderRadius: 2,
-    position: 'relative',
-    marginBottom: Spacing.sm,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: Colors.accent,
-    borderRadius: 2,
-  },
-  progressThumb: {
-    position: 'absolute',
-    top: -6,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: Colors.accent,
-    marginLeft: -8,
-  },
-  timeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  timeText: {
-    color: Colors.text.inverse,
-    fontSize: 12,
-    fontWeight: '500',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   loadingContainer: {
-    height: 200,
+    height: 220,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 12,
   },
   loadingText: {
-    color: Colors.text.secondary,
-    fontSize: 16,
+    color: '#fff',
+    fontSize: 14,
+    marginTop: Spacing.md,
   },
   errorContainer: {
-    height: 200,
+    height: 220,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: '#1a1a2e',
     padding: Spacing.lg,
+    borderRadius: 12,
   },
   errorText: {
-    color: Colors.error,
-    fontSize: 16,
+    color: '#ff6b6b',
+    fontSize: 14,
     textAlign: 'center',
     marginVertical: Spacing.md,
   },
   retryButton: {
     backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.md,
-    borderRadius: 8,
+    borderRadius: 25,
+    marginTop: Spacing.sm,
   },
   retryText: {
     color: Colors.text.inverse,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
   },
 });

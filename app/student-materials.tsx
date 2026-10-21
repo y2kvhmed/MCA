@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getMaterialsForStudentFixed } from '../lib/database';
+import { getMaterialsForStudent } from '../lib/database';
+import { supabase } from '../lib/supabase';
 import { formatRelativeDate, formatFileSize, handleError } from '../lib/utils';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -30,15 +31,41 @@ export default function StudentMaterials() {
       
       setUser(currentUser);
 
-      // Load materials for this student
-      const { data: materialsData, error } = await getMaterialsForStudentFixed(currentUser.id);
-      if (error) {
-        console.error('Materials error:', error);
-        handleError(error, 'Failed to load materials');
+      // Load materials for this student's school
+      let query = supabase
+        .from('study_materials')
+        .select(`
+          *,
+          uploaded_by_user:app_users!study_materials_uploaded_by_fkey(id, name)
+        `)
+        .eq('is_published', true)
+        .order('created_at', { ascending: false });
+
+      if (currentUser.school_id) {
+        query = query.or(`school_id.eq.${currentUser.school_id},school_id.is.null`);
       } else {
-        console.log('Loaded materials:', materialsData?.length || 0);
-        setMaterials(materialsData || []);
+        query = query.is('school_id', null);
       }
+
+      let { data: materialsData, error } = await query;
+      
+      if (error) {
+        console.warn('Materials query error, trying fallback:', error.message);
+        let fbQuery = supabase
+          .from('study_materials')
+          .select('*')
+          .eq('is_published', true)
+          .order('created_at', { ascending: false });
+        if (currentUser.school_id) {
+          fbQuery = fbQuery.or(`school_id.eq.${currentUser.school_id},school_id.is.null`);
+        } else {
+          fbQuery = fbQuery.is('school_id', null);
+        }
+        const { data: fbData } = await fbQuery;
+        materialsData = fbData;
+      }
+
+      setMaterials(materialsData || []);
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load materials');

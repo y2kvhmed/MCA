@@ -84,8 +84,9 @@ class BrowserNotificationManager {
   }
 }
 
-export const browserNotifications = new BrowserNotificationManager();//
- Notification templates for common use cases
+export const browserNotifications = new BrowserNotificationManager();
+
+// Notification templates for common use cases
 export const NotificationTemplates = {
   newMessage: (senderName: string, message: string) => ({
     title: 'New Message',
@@ -121,7 +122,7 @@ export const NotificationTemplates = {
   }),
 
   systemAlert: (message: string, priority: 'low' | 'medium' | 'high' = 'medium') => ({
-    title: priority === 'high' ? '⚠️ Important Alert' : 'System Notification',
+    title: priority === 'high' ? 'Important Alert' : 'System Notification',
     body: message,
     icon: '/icons/system.png',
     tag: 'system',

@@ -145,13 +145,6 @@ export default function EditAssignment() {
           />
         </View>
 
-        <Input
-          label="Max Score"
-          value={maxScore}
-          onChangeText={setMaxScore}
-          placeholder="100"
-          keyboardType="numeric"
-        />
 
         <Button
           title="Update Assignment"

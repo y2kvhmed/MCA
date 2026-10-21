@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +29,7 @@ export default function MaterialDetails() {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
 
+      let materialData = null;
       const { data, error } = await supabase
         .from('study_materials')
         .select(`
@@ -38,8 +39,18 @@ export default function MaterialDetails() {
         .eq('id', materialId)
         .single();
 
-      if (error) throw error;
-      setMaterial(data);
+      if (error) {
+        const { data: fallback, error: fbErr } = await supabase
+          .from('study_materials')
+          .select('*')
+          .eq('id', materialId)
+          .single();
+        if (fbErr) throw fbErr;
+        materialData = fallback;
+      } else {
+        materialData = data;
+      }
+      setMaterial(materialData);
     } catch (error) {
       handleError(error, 'Failed to load material');
     } finally {
@@ -66,18 +77,25 @@ export default function MaterialDetails() {
       return;
     }
 
-    Alert.alert(
-      'Delete Material',
-      `Are you sure you want to delete "${material?.title}"? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: confirmDelete
-        }
-      ]
-    );
+    const confirmMsg = `Are you sure you want to delete "${material?.title}"? This action cannot be undone.`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMsg)) {
+        confirmDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Material',
+        confirmMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Delete', 
+            style: 'destructive',
+            onPress: confirmDelete
+          }
+        ]
+      );
+    }
   };
 
   const confirmDelete = async () => {

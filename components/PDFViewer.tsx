@@ -1,245 +1,201 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Text, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator, Modal, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useTheme } from '../contexts/ThemeContext';
-import LoadingSpinner from './LoadingSpinner';
+import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
-
-// For web compatibility, we'll use a WebView-based PDF viewer
-import { WebView } from 'react-native-webview';
-
-const { width, height } = Dimensions.get('window');
+import { supabase } from '../lib/supabase';
 
 interface PDFViewerProps {
-  uri: string;
-  title?: string;
+  filePath?: string;
+  fileUrl?: string;
+  fileName?: string;
   onClose?: () => void;
 }
 
-export default function PDFViewer({ uri, title, onClose }: PDFViewerProps) {
-  const router = useRouter();
-  const { colors } = useTheme();
+export default function PDFViewer({ filePath, fileUrl, fileName, onClose }: PDFViewerProps) {
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
+  const [error, setError] = useState<string>('');
+  const [pdfUrl, setPdfUrl] = useState<string>('');
+  const [visible, setVisible] = useState(true);
 
-  const styles = createStyles(colors);
+  useEffect(() => {
+    loadPdfUrl();
+  }, [filePath, fileUrl]);
 
-  const handleClose = () => {
-    if (onClose) {
-      onClose();
-    } else {
-      router.back();
+  const loadPdfUrl = async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      // If we have a direct URL, use it
+      if (fileUrl && (fileUrl.startsWith('http://') || fileUrl.startsWith('https://'))) {
+        setPdfUrl(fileUrl);
+        setLoading(false);
+        return;
+      }
+
+      // Try to get signed URL from storage
+      if (filePath) {
+        // Try submissions bucket first
+        const { data, error: err } = await supabase.storage
+          .from('submissions')
+          .createSignedUrl(filePath, 3600);
+
+        if (!err && data?.signedUrl) {
+          setPdfUrl(data.signedUrl);
+          setLoading(false);
+          return;
+        }
+
+        // Try materials bucket
+        const { data: matData, error: matErr } = await supabase.storage
+          .from('materials')
+          .createSignedUrl(filePath, 3600);
+
+        if (!matErr && matData?.signedUrl) {
+          setPdfUrl(matData.signedUrl);
+          setLoading(false);
+          return;
+        }
+
+        // Try public URL as fallback
+        const { data: pubData } = supabase.storage
+          .from('submissions')
+          .getPublicUrl(filePath);
+
+        if (pubData?.publicUrl) {
+          setPdfUrl(pubData.publicUrl);
+          setLoading(false);
+          return;
+        }
+      }
+
+      setError('Could not load PDF. Please check storage permissions.');
+      setLoading(false);
+    } catch (err) {
+      console.error('PDF load error:', err);
+      setError('Failed to load PDF');
+      setLoading(false);
     }
   };
 
-  const handleError = () => {
-    setError(true);
-    setLoading(false);
-    Alert.alert('Error', 'Failed to load PDF. Please try again.');
+  const handleClose = () => {
+    setVisible(false);
+    onClose?.();
   };
 
-  // Create PDF viewer HTML for web compatibility
-  const pdfViewerHtml = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body {
-          margin: 0;
-          padding: 0;
-          background: #f5f5f5;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          height: 100vh;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-        .pdf-container {
-          width: 100%;
-          height: 100%;
-          display: flex;
-          flex-direction: column;
-        }
-        .pdf-viewer {
-          flex: 1;
-          border: none;
-          background: white;
-        }
-        .error-message {
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          height: 100%;
-          color: #666;
-        }
-        .error-icon {
-          font-size: 48px;
-          margin-bottom: 16px;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="pdf-container">
-        <iframe 
-          src="${uri}#toolbar=1&navpanes=1&scrollbar=1&page=1&view=FitH"
-          class="pdf-viewer"
-          onload="window.ReactNativeWebView.postMessage('loaded')"
-          onerror="window.ReactNativeWebView.postMessage('error')"
-        ></iframe>
-      </div>
-    </body>
-    </html>
-  `;
+  const openInNewTab = () => {
+    if (pdfUrl && typeof window !== 'undefined') {
+      window.open(pdfUrl, '_blank');
+    }
+  };
 
-  if (error) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleClose}>
-            <Ionicons name="close" size={24} color={colors.text.primary} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>{title || 'PDF Viewer'}</Text>
-          <View style={{ width: 24 }} />
-        </View>
-        
-        <View style={styles.errorContainer}>
-          <Ionicons name="document-text" size={64} color={colors.text.tertiary} />
-          <Text style={styles.errorTitle}>Cannot Load PDF</Text>
-          <Text style={styles.errorMessage}>
-            The PDF file could not be loaded. Please check your internet connection and try again.
-          </Text>
-          <TouchableOpacity 
-            style={styles.retryButton}
-            onPress={() => {
-              setError(false);
-              setLoading(true);
-            }}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  if (!visible) return null;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={handleClose}>
-          <Ionicons name="close" size={24} color={colors.text.primary} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {title || 'PDF Viewer'}
-        </Text>
-        <TouchableOpacity 
-          onPress={() => Alert.alert('Download', 'Download functionality would be implemented here')}
-        >
-          <Ionicons name="download" size={24} color={colors.primary} />
-        </TouchableOpacity>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={handleClose}
+    >
+      <View style={styles.container}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
+            <Ionicons name="close" size={28} color={Colors.text.primary} />
+          </TouchableOpacity>
+          <Text style={styles.fileName} numberOfLines={1}>
+            {fileName || 'Document'}
+          </Text>
+          <TouchableOpacity onPress={openInNewTab} style={styles.openButton}>
+            <Ionicons name="open-outline" size={24} color={Colors.primary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Content */}
+        <View style={styles.content}>
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.loadingText}>Loading document...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.errorContainer}>
+              <Ionicons name="alert-circle" size={64} color={Colors.error} />
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity style={styles.retryButton} onPress={loadPdfUrl}>
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : Platform.OS === 'web' ? (
+            // Web: Use iframe to display PDF
+            <iframe
+              src={pdfUrl}
+              style={{ width: '100%', height: '100%', border: 'none' }}
+              title={fileName || 'PDF Document'}
+            />
+          ) : (
+            // Mobile: Show message to open externally
+            <View style={styles.mobileContainer}>
+              <Ionicons name="document-text" size={80} color={Colors.primary} />
+              <Text style={styles.mobileTitle}>{fileName || 'Document'}</Text>
+              <Text style={styles.mobileText}>
+                Tap the button below to view this document
+              </Text>
+              <TouchableOpacity style={styles.openExternalButton} onPress={openInNewTab}>
+                <Ionicons name="open-outline" size={20} color={Colors.text.inverse} />
+                <Text style={styles.openExternalText}>Open Document</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </View>
-
-      {loading && (
-        <View style={styles.loadingContainer}>
-          <LoadingSpinner />
-          <Text style={styles.loadingText}>Loading PDF...</Text>
-        </View>
-      )}
-
-      <WebView
-        source={{ html: pdfViewerHtml }}
-        style={[styles.webview, loading && { opacity: 0 }]}
-        onMessage={(event) => {
-          const message = event.nativeEvent.data;
-          if (message === 'loaded') {
-            setLoading(false);
-          } else if (message === 'error') {
-            handleError();
-          }
-        }}
-        onError={handleError}
-        onHttpError={handleError}
-        javaScriptEnabled
-        domStorageEnabled
-        startInLoadingState={false}
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-      />
-
-      {!loading && (
-        <View style={styles.controls}>
-          <TouchableOpacity 
-            style={styles.controlButton}
-            onPress={() => Alert.alert('Zoom', 'Zoom controls would be implemented here')}
-          >
-            <Ionicons name="search" size={20} color={colors.text.primary} />
-            <Text style={styles.controlText}>Zoom</Text>
-          </TouchableOpacity>
-          
-          <View style={styles.pageInfo}>
-            <Text style={styles.pageText}>
-              {totalPages > 0 ? `${currentPage} / ${totalPages}` : 'PDF Document'}
-            </Text>
-          </View>
-          
-          <TouchableOpacity 
-            style={styles.controlButton}
-            onPress={() => Alert.alert('Share', 'Share functionality would be implemented here')}
-          >
-            <Ionicons name="share" size={20} color={colors.text.primary} />
-            <Text style={styles.controlText}>Share</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </SafeAreaView>
+    </Modal>
   );
 }
 
-const createStyles = (colors: any) => StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: Colors.background,
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: Spacing.lg,
-    backgroundColor: colors.card.background,
+    justifyContent: 'space-between',
+    padding: Spacing.md,
+    backgroundColor: Colors.card.background,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border.light,
+    borderBottomColor: Colors.border.light,
+    paddingTop: 50, // Safe area
   },
-  headerTitle: {
+  closeButton: {
+    padding: Spacing.sm,
+  },
+  fileName: {
     flex: 1,
     fontSize: 16,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: Colors.text.primary,
     textAlign: 'center',
     marginHorizontal: Spacing.md,
   },
-  webview: {
+  openButton: {
+    padding: Spacing.sm,
+  },
+  content: {
     flex: 1,
   },
   loadingContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: colors.background,
-    zIndex: 10,
   },
   loadingText: {
-    marginTop: Spacing.lg,
-    fontSize: 14,
-    color: colors.text.secondary,
+    marginTop: Spacing.md,
+    fontSize: 16,
+    color: Colors.text.secondary,
   },
   errorContainer: {
     flex: 1,
@@ -247,56 +203,55 @@ const createStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.xl,
   },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.text.primary,
-    marginTop: Spacing.lg,
-    marginBottom: Spacing.sm,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: colors.text.secondary,
+  errorText: {
+    marginTop: Spacing.md,
+    fontSize: 16,
+    color: Colors.error,
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: Spacing.xl,
   },
   retryButton: {
-    backgroundColor: colors.primary,
+    marginTop: Spacing.lg,
+    backgroundColor: Colors.primary,
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.md,
-    borderRadius: 8,
+    borderRadius: 25,
   },
-  retryButtonText: {
-    color: colors.text.inverse,
-    fontSize: 14,
+  retryText: {
+    color: Colors.text.inverse,
+    fontSize: 16,
     fontWeight: '600',
   },
-  controls: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: Spacing.lg,
-    backgroundColor: colors.card.background,
-    borderTopWidth: 1,
-    borderTopColor: colors.border.light,
-  },
-  controlButton: {
-    alignItems: 'center',
-    padding: Spacing.sm,
-  },
-  controlText: {
-    fontSize: 12,
-    color: colors.text.secondary,
-    marginTop: 4,
-  },
-  pageInfo: {
+  mobileContainer: {
     flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: Spacing.xl,
   },
-  pageText: {
+  mobileTitle: {
+    marginTop: Spacing.lg,
+    fontSize: 20,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  mobileText: {
+    marginTop: Spacing.sm,
     fontSize: 14,
-    color: colors.text.primary,
-    fontWeight: '500',
+    color: Colors.text.secondary,
+    textAlign: 'center',
+  },
+  openExternalButton: {
+    marginTop: Spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: 25,
+  },
+  openExternalText: {
+    color: Colors.text.inverse,
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: Spacing.sm,
   },
 });

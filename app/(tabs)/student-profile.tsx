@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +18,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export default function StudentProfile() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [stats, setStats] = useState<any>({});
   const [loading, setLoading] = useState(true);
 
@@ -32,14 +34,125 @@ export default function StudentProfile() {
       
       setUser(currentUser);
 
-      // Load student statistics
-      const statsResult = await getStudentStats(currentUser.id);
-      setStats(statsResult);
+      const avatar = currentUser.avatar_url || (await AsyncStorage.getItem(`@student_avatar_${currentUser.id}`));
+      if (avatar) setAvatarUri(avatar);
+
+      // Load real student statistics from database
+      const { supabase } = await import('../../lib/supabase');
+      
+      // Get total assignments for student's school
+      let totalAssignments = 0;
+      if (currentUser.school_id) {
+        const { count } = await supabase
+          .from('assignments')
+          .select('id', { count: 'exact', head: true })
+          .eq('school_id', currentUser.school_id);
+        totalAssignments = count || 0;
+      }
+      
+      // Get student's submissions
+      const { data: submissions } = await supabase
+        .from('submissions')
+        .select('id, grade, assignment:assignments(max_score)')
+        .eq('student_id', currentUser.id);
+      
+      const completedAssignments = submissions?.length || 0;
+      
+      // Calculate average grade from submissions that have grades
+      let averageGrade = 0;
+      if (submissions && submissions.length > 0) {
+        const gradedSubmissions = submissions.filter((s: any) => s.grade !== null && s.assignment?.max_score);
+        if (gradedSubmissions.length > 0) {
+          const totalPercentage = gradedSubmissions.reduce((sum: number, s: any) => {
+            return sum + (s.grade / s.assignment.max_score) * 100;
+          }, 0);
+          averageGrade = Math.round(totalPercentage / gradedSubmissions.length);
+        }
+      }
+      
+      setStats({
+        totalAssignments,
+        completedAssignments,
+        averageGrade,
+      });
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load profile data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePickAvatar = async () => {
+    try {
+      const ImagePicker = await import('expo-image-picker');
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        const MAX_AVATAR_SIZE = 3 * 1024 * 1024; // Strict limit: 3MB
+
+        if (asset.fileSize && asset.fileSize > MAX_AVATAR_SIZE) {
+          Alert.alert('Image Too Large', 'Profile picture must be under 3MB. Please choose a smaller image.');
+          return;
+        }
+
+        setUploadingAvatar(true);
+        let blob: Blob;
+        if ((asset as any).file instanceof Blob) {
+          blob = (asset as any).file;
+        } else {
+          const response = await fetch(asset.uri);
+          blob = await response.blob();
+        }
+
+        if (blob.size > MAX_AVATAR_SIZE) {
+          Alert.alert('Image Too Large', 'Profile picture must be under 3MB. Please choose a smaller image.');
+          setUploadingAvatar(false);
+          return;
+        }
+
+        setAvatarUri(asset.uri);
+        if (user?.id) {
+          await AsyncStorage.setItem(`@student_avatar_${user.id}`, asset.uri);
+        }
+
+        try {
+          const { supabase } = await import('../../lib/supabase');
+          const fileName = `avatars/${user?.id || 'student'}-${Date.now()}.jpg`;
+          const { error: uploadError } = await supabase.storage
+            .from('materials')
+            .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
+
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage
+              .from('materials')
+              .getPublicUrl(fileName);
+            if (urlData?.publicUrl) {
+              setAvatarUri(urlData.publicUrl);
+              const updatedUser = { ...user, avatar_url: urlData.publicUrl };
+              setUser(updatedUser);
+              await AsyncStorage.setItem('current_user', JSON.stringify(updatedUser));
+              await AsyncStorage.setItem(`@student_avatar_${user.id}`, urlData.publicUrl);
+              await supabase.from('app_users').update({ avatar_url: urlData.publicUrl }).eq('id', user.id);
+            }
+          }
+        } catch (e) {
+          console.log('Online avatar note:', e);
+        }
+
+        Alert.alert('Success', 'Profile picture updated successfully!');
+      }
+    } catch (error) {
+      console.error('Error changing avatar:', error);
+      Alert.alert('Error', 'Failed to update profile picture.');
+    } finally {
+      setUploadingAvatar(false);
     }
   };
 
@@ -65,13 +178,6 @@ export default function StudentProfile() {
     }
   };
 
-  const getGradeColor = (percentage: number) => {
-    if (percentage >= 90) return Colors.success;
-    if (percentage >= 80) return Colors.info;
-    if (percentage >= 70) return Colors.warning;
-    return Colors.error;
-  };
-
   if (loading) {
     return <LoadingSpinner />;
   }
@@ -82,15 +188,28 @@ export default function StudentProfile() {
         {/* Profile Header */}
         <AnimatedCard style={styles.profileCard} delay={100}>
           <View style={styles.profileHeader}>
-            <View style={styles.avatar}>
-              <Ionicons name="person" size={32} color={Colors.text.inverse} />
-            </View>
+            <TouchableOpacity 
+              onPress={handlePickAvatar} 
+              activeOpacity={0.8}
+              style={styles.avatarTouchable}
+              disabled={uploadingAvatar}
+            >
+              <View style={styles.avatar}>
+                {avatarUri ? (
+                  <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+                ) : (
+                  <Ionicons name="person" size={32} color={Colors.text.inverse} />
+                )}
+                <View style={styles.cameraIconBadge}>
+                  <Ionicons name="camera" size={13} color="#FFFFFF" />
+                </View>
+              </View>
+            </TouchableOpacity>
             <View style={styles.profileInfo}>
               <Text style={styles.profileName}>{user?.name}</Text>
               <Text style={styles.profileEmail}>{user?.email}</Text>
               <Text style={styles.profileRole}>Student</Text>
             </View>
-            {/* Students cannot edit their own profile - only admins/teachers can */}
           </View>
         </AnimatedCard>
 
@@ -99,21 +218,21 @@ export default function StudentProfile() {
           <Text style={styles.sectionTitle}>Academic Overview</Text>
           <View style={styles.statsGrid}>
             <View style={styles.statItem}>
-              <Ionicons name="school" size={24} color={Colors.primary} />
-              <Text style={styles.statValue}>{stats.enrolledClasses || 0}</Text>
-              <Text style={styles.statLabel}>Classes</Text>
-            </View>
-            <View style={styles.statItem}>
               <Ionicons name="document-text" size={24} color={Colors.info} />
               <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
               <Text style={styles.statLabel}>Assignments</Text>
             </View>
             <View style={styles.statItem}>
-              <Ionicons name="trophy" size={24} color={getGradeColor(stats.averageGrade || 0)} />
-              <Text style={[styles.statValue, { color: getGradeColor(stats.averageGrade || 0) }]}>
-                {stats.averageGrade ? `${stats.averageGrade}%` : 'N/A'}
+              <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
+              <Text style={styles.statValue}>{stats.completedAssignments || 0}</Text>
+              <Text style={styles.statLabel}>Submitted</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Ionicons name="close-circle" size={24} color={Colors.error} />
+              <Text style={[styles.statValue, { color: Colors.error }]}>
+                {Math.max(0, (stats.totalAssignments || 0) - (stats.completedAssignments || 0))}
               </Text>
-              <Text style={styles.statLabel}>Avg Grade</Text>
+              <Text style={styles.statLabel}>Missing</Text>
             </View>
           </View>
         </AnimatedCard>
@@ -134,55 +253,18 @@ export default function StudentProfile() {
             </View>
           )}
           
-          {user?.parent_phone && (
-            <View style={styles.contactItem}>
-              <Ionicons name="people" size={20} color={Colors.text.secondary} />
-              <Text style={styles.contactText}>Parent: {user.parent_phone}</Text>
-            </View>
-          )}
-          
-          {user?.grade_level && (
-            <View style={styles.contactItem}>
-              <Ionicons name="school" size={20} color={Colors.text.secondary} />
-              <Text style={styles.contactText}>Grade: {user.grade_level}</Text>
-            </View>
-          )}
         </AnimatedCard>
 
-        {/* Quick Actions */}
-        <AnimatedCard style={styles.actionsCard} delay={400}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          
-          <TouchableOpacity 
-            style={styles.actionItem}
-            onPress={() => router.push('/student-grades')}
-          >
-            <Ionicons name="trophy" size={24} color={Colors.primary} />
-            <Text style={styles.actionText}>View My Grades</Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
-          </TouchableOpacity>
-          
-          {/* Profile editing removed for students - only admins/teachers can edit student profiles */}
-        </AnimatedCard>
 
-        {/* Account Settings */}
-        <AnimatedCard style={styles.settingsCard} delay={500}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Account Status:</Text>
-            <Text style={[styles.settingValue, { color: user?.is_active ? Colors.success : Colors.error }]}>
-              {user?.is_active ? 'Active' : 'Inactive'}
-            </Text>
-          </View>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Member Since:</Text>
-            <Text style={styles.settingValue}>
-              {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-            </Text>
-          </View>
-        </AnimatedCard>
+
+        {/* Change Password */}
+        <Button
+          title="Change Password"
+          onPress={() => router.push('/change-password')}
+          variant="outline"
+          icon="key-outline"
+          style={{ marginBottom: Spacing.md }}
+        />
 
         {/* Logout Button */}
         <Button
@@ -212,6 +294,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  avatarTouchable: {
+    marginRight: Spacing.lg,
+  },
   avatar: {
     width: 64,
     height: 64,
@@ -219,7 +304,25 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: Spacing.lg,
+    position: 'relative',
+  },
+  avatarImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
+  cameraIconBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: Colors.primary,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   profileInfo: {
     flex: 1,

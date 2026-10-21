@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -143,7 +143,11 @@ export default function StudentDetails() {
         <Card style={styles.studentCard}>
           <View style={styles.studentHeader}>
             <View style={styles.studentAvatar}>
-              <Ionicons name="person" size={32} color={Colors.text.inverse} />
+              {student.avatar_url ? (
+                <Image source={{ uri: student.avatar_url }} style={styles.avatarImage} />
+              ) : (
+                <Ionicons name="person" size={32} color={Colors.text.inverse} />
+              )}
             </View>
             <View style={styles.studentInfo}>
               <Text style={styles.studentName}>{student.name}</Text>
@@ -168,9 +172,13 @@ export default function StudentDetails() {
               <Text style={styles.statLabel}>Missing</Text>
             </View>
             <View style={styles.statItem}>
-              <Ionicons name="star" size={24} color={Colors.warning} />
-              <Text style={styles.statValue}>{averageGrade.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>Avg Grade</Text>
+              <Ionicons name="pie-chart" size={24} color={Colors.primary} />
+              <Text style={styles.statValue}>
+                {assignments.length > 0
+                  ? `${Math.round((submittedCount / assignments.length) * 100)}%`
+                  : (submittedCount > 0 ? '100%' : '0%')}
+              </Text>
+              <Text style={styles.statLabel}>Submission Rate</Text>
             </View>
           </View>
         </Card>
@@ -287,6 +295,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.lg,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   studentInfo: {
     flex: 1,

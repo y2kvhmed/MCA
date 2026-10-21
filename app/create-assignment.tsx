@@ -3,13 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
 import { getCurrentUser } from '../lib/auth';
-import { createAssignment, createMaterial } from '../lib/database';
 import { handleError, showSuccess } from '../lib/utils';
-import { uploadFileToSupabase, generateFilePath, validateFile } from '../lib/fileUpload';
-import DragDropUpload from '../components/DragDropUpload';
-import { notifyNewAssignmentToClass } from '../lib/notifications';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -25,10 +20,8 @@ export default function CreateAssignment() {
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [dueDate, setDueDate] = useState<Date | null>(null);
-  const [maxScore, setMaxScore] = useState('100');
-  const [assignmentType, setAssignmentType] = useState('assignment');
-  const [selectedFiles, setSelectedFiles] = useState<any[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [schools, setSchools] = useState<any[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,34 +33,33 @@ export default function CreateAssignment() {
     try {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
+
+      if (currentUser) {
+        let availableSchools: any[] = [];
+        if (currentUser.role === 'admin') {
+          const { getSchools } = await import('../lib/database');
+          const { data } = await getSchools();
+          if (data) availableSchools = data;
+        } else {
+          const { getTeacherSchools } = await import('../lib/database');
+          const { data } = await getTeacherSchools(currentUser.id);
+          if (data && data.length > 0) {
+            availableSchools = data;
+          } else if (currentUser.school_id) {
+            const { data: directSchool } = await supabase.from('schools').select('*').eq('id', currentUser.school_id).single();
+            if (directSchool) availableSchools = [directSchool];
+          }
+        }
+        setSchools(availableSchools);
+        if (availableSchools.length > 0) {
+          setSelectedSchoolId(availableSchools[0].id);
+        }
+      }
     } catch (error) {
       console.error('Load data error:', error);
     } finally {
       setLoading(false);
     }
-  };
-
-  const pickFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'image/*'],
-        copyToCacheDirectory: true,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setSelectedFile(result.assets[0]);
-      }
-    } catch (error) {
-      handleError(error, 'Failed to pick file');
-    }
-  };
-
-  const removeFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const removeAllFiles = () => {
-    setSelectedFiles([]);
   };
 
   const handleSubmit = async () => {
@@ -83,84 +75,57 @@ export default function CreateAssignment() {
 
     setSubmitting(true);
     try {
-      console.log('Creating assignment/material:', { title, assignmentType, user: user.id });
+      // Create assignment in assignments table
+      const assignmentData: any = {
+        title: title.trim(),
+        teacher_id: user.id,
+        school_id: selectedSchoolId || user.school_id || null,
+        is_published: true, // Ensure assignments are published by default
+      };
 
-      if (assignmentType === 'material') {
-        // Create material in study_materials table
-        const materialData = {
-          title: title.trim(),
-          description: description.trim(),
-          subject: 'Physics',
-          grade_level: null,
-          created_by: user.id,
-          school_id: user.school_id,
-          is_published: true,
-          content_type: 'text',
-          file_url: null,
-          file_path: null,
-          file_size: null
-        };
+      // Add optional fields
+      if (description.trim()) assignmentData.description = description.trim();
+      if (instructions.trim()) assignmentData.instructions = instructions.trim();
+      if (dueDate) assignmentData.due_date = dueDate.toISOString();
 
-        console.log('Inserting material:', materialData);
+      console.log('Inserting assignment:', assignmentData);
 
-        const { data, error } = await supabase
-          .from('study_materials')
-          .insert(materialData)
-          .select()
-          .single();
+      const { data, error } = await supabase
+        .from('assignments')
+        .insert(assignmentData)
+        .select()
+        .single();
 
-        if (error) {
-          console.error('Material creation error:', error);
-          throw error;
-        }
+      if (error) {
+        console.error('Assignment creation error:', error);
+        Alert.alert('Assignment Error', error.message || JSON.stringify(error));
+        throw error;
+      }
 
-        console.log('Material created successfully:', data);
-        showSuccess('Material shared with all students successfully');
-      } else {
-        // Create assignment in assignments table
-        const assignmentData = {
-          title: title.trim(),
-          description: description.trim(),
-          subject: 'Physics',
-          grade_level: null,
-          due_date: dueDate?.toISOString() || null,
-          created_by: user.id,
-          school_id: user.school_id,
-          material_id: null,
-          max_points: parseInt(maxScore) || 100,
-          is_published: true
-        };
-
-        console.log('Inserting assignment:', assignmentData);
-
-        const { data, error } = await supabase
-          .from('assignments')
-          .insert(assignmentData)
-          .select()
-          .single();
-
-        if (error) {
-          console.error('Assignment creation error:', error);
-          throw error;
-        }
-
-        console.log('Assignment created successfully:', data);
-        showSuccess('Assignment created successfully');
+      console.log('Assignment created successfully:', data);
+      showSuccess('Assignment created successfully');
+      
+      // Send push notification to all students
+      try {
+        const { notifySchoolStudents } = await import('../lib/pushNotifications');
+        await notifySchoolStudents(
+          selectedSchoolId || user.school_id,
+          'New Assignment',
+          `New assignment: ${title.trim()}`,
+          { type: 'assignment', entityId: data.id }
+        );
+      } catch (notifError) {
+        console.log('Push notification failed:', notifError);
       }
       
       router.back();
     } catch (error) {
       console.error('Submit error:', error);
-      handleError(error, `Failed to create ${assignmentType}`);
+      handleError(error, 'Failed to create assignment');
     } finally {
       setSubmitting(false);
     }
   };
-
-  const assignmentTypes = [
-    { value: 'assignment', label: 'Assignment' },
-    { value: 'material', label: 'Material' },
-  ];
 
   if (loading) {
     return <LoadingSpinner />;
@@ -177,46 +142,49 @@ export default function CreateAssignment() {
       </View>
 
       <ScrollView style={styles.content}>
+        {/* School Selector */}
+        <View style={styles.schoolSelectorSection}>
+          <Text style={styles.selectorLabel}>Target School</Text>
+          {schools.length === 0 ? (
+            <Text style={styles.noSchoolsText}>No assigned schools found</Text>
+          ) : (
+            <View style={styles.schoolChipsContainer}>
+              {user?.role === 'admin' && (
+                <TouchableOpacity
+                  style={[styles.schoolChip, selectedSchoolId === null && styles.schoolChipActive]}
+                  onPress={() => setSelectedSchoolId(null)}
+                >
+                  <Ionicons name="globe-outline" size={16} color={selectedSchoolId === null ? '#FFF' : Colors.primary} />
+                  <Text style={[styles.schoolChipText, selectedSchoolId === null && styles.schoolChipTextActive]}>
+                    All Schools
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {schools.map((school) => {
+                const isSelected = selectedSchoolId === school.id;
+                return (
+                  <TouchableOpacity
+                    key={school.id}
+                    style={[styles.schoolChip, isSelected && styles.schoolChipActive]}
+                    onPress={() => setSelectedSchoolId(school.id)}
+                  >
+                    <Ionicons name="business" size={16} color={isSelected ? '#FFF' : Colors.primary} />
+                    <Text style={[styles.schoolChipText, isSelected && styles.schoolChipTextActive]}>
+                      {school.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </View>
+
         <Input
           label="Assignment Title *"
           value={title}
           onChangeText={setTitle}
           placeholder="Enter assignment title"
         />
-
-
-
-        {assignmentType === 'material' && (
-          <View style={styles.materialScope}>
-            <Ionicons name="school" size={20} color={Colors.primary} />
-            <Text style={styles.materialScopeText}>
-              This material will be shared with all students in your school
-            </Text>
-          </View>
-        )}
-
-        <Text style={styles.label}>Assignment Type</Text>
-        <View style={styles.typeSelector}>
-          {assignmentTypes.map((type) => (
-            <TouchableOpacity
-              key={type.value}
-              style={[
-                styles.typeButton,
-                assignmentType === type.value && styles.typeButtonSelected,
-              ]}
-              onPress={() => setAssignmentType(type.value)}
-            >
-              <Text
-                style={[
-                  styles.typeButtonText,
-                  assignmentType === type.value && styles.typeButtonTextSelected,
-                ]}
-              >
-                {type.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
 
         <Input
           label="Description"
@@ -236,78 +204,18 @@ export default function CreateAssignment() {
           numberOfLines={4}
         />
 
-        {assignmentType !== 'material' && (
-          <>
-            <DateTimePicker
-              label="Due Date & Time"
-              value={dueDate}
-              onChange={setDueDate}
-              placeholder="Select due date and time"
-            />
-          </>
-        )}
-
-        {assignmentType === 'material' && (
-          <>
-            <View style={styles.materialInfo}>
-              <Ionicons name="information-circle" size={20} color={Colors.info} />
-              <Text style={styles.materialInfoText}>
-                Materials are shared with all students immediately and don't have due dates.
-              </Text>
-            </View>
-
-            <DragDropUpload
-              onFilesSelected={(files) => setSelectedFiles(prev => [...prev, ...files].slice(0, 5))}
-              acceptedTypes={['application/pdf', 'image/*', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']}
-              maxFiles={5}
-              maxSizeMB={10}
-              title="Drop material files here or click to browse"
-              subtitle="PDF, Images, Word documents up to 10MB each (max 5 files)"
-              multiple={true}
-            />
-            
-            {selectedFiles.length > 0 && (
-              <View style={styles.selectedFilesContainer}>
-                <View style={styles.filesHeader}>
-                  <Text style={styles.filesTitle}>Selected Files ({selectedFiles.length}/5)</Text>
-                  <TouchableOpacity onPress={removeAllFiles} style={styles.clearAllButton}>
-                    <Text style={styles.clearAllText}>Clear All</Text>
-                  </TouchableOpacity>
-                </View>
-                
-                {selectedFiles.map((file, index) => (
-                  <View key={index} style={styles.selectedFileContainer}>
-                    <View style={styles.fileInfo}>
-                      <Ionicons 
-                        name={file.type?.includes('image') ? 'image' : 'document'} 
-                        size={20} 
-                        color={Colors.success} 
-                      />
-                      <View style={styles.fileDetails}>
-                        <Text style={styles.fileName}>{file.name}</Text>
-                        <Text style={styles.fileSize}>
-                          {(file.size / 1024 / 1024).toFixed(2)} MB
-                        </Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity 
-                      style={styles.removeFileButton} 
-                      onPress={() => removeFile(index)}
-                    >
-                      <Ionicons name="close-circle" size={20} color={Colors.error} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
-          </>
-        )}
+        <DateTimePicker
+          label="Due Date & Time"
+          value={dueDate}
+          onChange={setDueDate}
+          placeholder="Select due date and time"
+        />
 
         <Button
-          title={uploading ? 'Uploading...' : (assignmentType === 'material' ? 'Share Material' : 'Create Assignment')}
+          title="Create Assignment"
           onPress={handleSubmit}
-          loading={submitting || uploading}
-          disabled={submitting || uploading}
+          loading={submitting}
+          disabled={submitting}
           style={styles.submitButton}
         />
       </ScrollView>
@@ -336,151 +244,50 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: Spacing.lg,
   },
-  label: {
+  schoolSelectorSection: {
+    marginBottom: Spacing.lg,
+  },
+  selectorLabel: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: Colors.text.primary,
     marginBottom: Spacing.sm,
   },
-
-  typeSelector: {
+  noSchoolsText: {
+    fontSize: 13,
+    color: Colors.text.secondary,
+    fontStyle: 'italic',
+  },
+  schoolChipsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: Spacing.xl,
+    gap: Spacing.sm,
   },
-  typeButton: {
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.border.medium,
-    backgroundColor: Colors.card.background,
-    marginRight: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  typeButtonSelected: {
-    backgroundColor: Colors.accent,
-    borderColor: Colors.accent,
-  },
-  typeButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: Colors.text.primary,
-  },
-  typeButtonTextSelected: {
-    color: Colors.text.primary,
-  },
-  dateButton: {
+  schoolChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 8,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: Colors.border.light,
     backgroundColor: Colors.card.background,
-    marginBottom: Spacing.xl,
+    gap: 6,
   },
-  dateLabel: {
-    fontSize: 14,
-    fontWeight: '500',
+  schoolChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  schoolChipText: {
+    fontSize: 13,
+    fontWeight: '600',
     color: Colors.text.primary,
   },
-  dateValue: {
-    fontSize: 14,
-    color: Colors.text.secondary,
+  schoolChipTextActive: {
+    color: '#FFFFFF',
   },
   submitButton: {
     marginTop: Spacing.lg,
     marginBottom: Spacing.xxxl,
-  },
-  datePickerContainer: {
-    marginTop: Spacing.md,
-    marginBottom: Spacing.md,
-  },
-  materialInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.info + '20',
-    padding: Spacing.md,
-    borderRadius: 8,
-    marginBottom: Spacing.lg,
-  },
-  materialInfoText: {
-    fontSize: 14,
-    color: Colors.info,
-    marginLeft: Spacing.sm,
-    flex: 1,
-  },
-  materialScope: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primary + '20',
-    padding: Spacing.md,
-    borderRadius: 8,
-    marginBottom: Spacing.lg,
-  },
-  materialScopeText: {
-    fontSize: 14,
-    color: Colors.primary,
-    marginLeft: Spacing.sm,
-    flex: 1,
-    fontWeight: '500',
-  },
-  fileUploadButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: Spacing.xl,
-    borderWidth: 2,
-    borderColor: Colors.primary,
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    backgroundColor: Colors.primary + '10',
-    marginBottom: Spacing.lg,
-  },
-  fileUploadText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.primary,
-    marginTop: Spacing.sm,
-  },
-  fileUploadSubtext: {
-    fontSize: 12,
-    color: Colors.text.secondary,
-    marginTop: Spacing.xs,
-  },
-  selectedFileContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: Spacing.lg,
-    backgroundColor: Colors.success + '20',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.success,
-    marginBottom: Spacing.lg,
-  },
-  fileInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  fileDetails: {
-    marginLeft: Spacing.sm,
-    flex: 1,
-  },
-  fileName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.success,
-  },
-  fileSize: {
-    fontSize: 12,
-    color: Colors.text.secondary,
-    marginTop: 2,
-  },
-  removeFileButton: {
-    padding: Spacing.xs,
   },
 });

@@ -1,14 +1,15 @@
-import React from 'react';
-import { Platform, View, Text, TouchableOpacity } from 'react-native';
-import { Stack } from 'expo-router';
+import React, { useState, useEffect } from 'react';
+import { Platform, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import { ToastProvider } from '../contexts/ToastContext';
+import { NotificationProvider } from '../contexts/NotificationContext';
 import NetworkStatus from '../components/NetworkStatus';
-import { useEffect } from 'react';
 import { registerForPushNotificationsAsync, savePushToken } from '../lib/notifications';
 import { getCurrentUser, checkUserActiveStatus } from '../lib/auth';
-import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Colors } from '../constants/Colors';
 
 
 // Error Boundary Component
@@ -31,7 +32,7 @@ class ErrorBoundary extends React.Component<
     this.setState({ error, errorInfo });
     
     // Log to console with more details
-    console.group('🚨 App Crash Details');
+    console.group('App Crash Details');
     console.error('Error:', error);
     console.error('Error Info:', errorInfo);
     console.error('Component Stack:', errorInfo?.componentStack);
@@ -86,16 +87,42 @@ if (Platform.OS === 'web') {
 
 export default function RootLayout() {
   const router = useRouter();
+  const [maintenanceActive, setMaintenanceActive] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('');
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   useEffect(() => {
-    // Development logging
     if (__DEV__) {
-      console.log('🚀 Starting Physics Learning App...');
+      console.log('Starting Physics Learning App...');
     }
     
     initializeNotifications();
     startUserStatusChecker();
+    checkMaintenance();
+
+    // Poll maintenance status every 15 seconds
+    const maintenanceInterval = setInterval(checkMaintenance, 15000);
+    return () => clearInterval(maintenanceInterval);
   }, []);
+
+  const checkMaintenance = async () => {
+    try {
+      const user = await getCurrentUser();
+      if (user) {
+        setUserRole(user.role);
+        if (user.role === 'admin') {
+          setMaintenanceActive(false);
+          return;
+        }
+      }
+      const { checkMaintenanceStatus } = await import('../lib/auth');
+      const { isMaintenance, message } = await checkMaintenanceStatus(user?.role);
+      setMaintenanceActive(isMaintenance);
+      setMaintenanceMessage(message);
+    } catch (e) {
+      // non-blocking
+    }
+  };
 
   const initializeNotifications = async () => {
     try {
@@ -112,28 +139,22 @@ export default function RootLayout() {
   };
 
   const startUserStatusChecker = () => {
-    // Check user status every 5 minutes (less aggressive)
+    // Check user status every 5 minutes
     const interval = setInterval(async () => {
       try {
-        // Only check if user is currently logged in
         const currentUser = await getCurrentUser();
         if (currentUser) {
-          // Only check active status for logged-in users
           const isActive = await checkUserActiveStatus();
           if (!isActive) {
-            // User has been deactivated, redirect to welcome
             console.log('User deactivated, redirecting to welcome');
             router.replace('/welcome');
           }
         }
-        // If no user is logged in, don't redirect (let them stay on login/welcome)
       } catch (error) {
         console.error('User status check error:', error);
-        // Don't redirect on errors - could be network issues
       }
-    }, 300000); // 5 minutes instead of 30 seconds
+    }, 300000);
 
-    // Cleanup interval on unmount
     return () => clearInterval(interval);
   };
 
@@ -141,33 +162,144 @@ export default function RootLayout() {
     <ErrorBoundary>
       <ThemeProvider>
         <ToastProvider>
-          <SafeAreaProvider>
-            <NetworkStatus />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="welcome" />
-              <Stack.Screen name="login" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="create-school" />
-              <Stack.Screen name="create-user" />
+          <NotificationProvider>
+            <SafeAreaProvider>
+              <NetworkStatus />
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="welcome" />
+                <Stack.Screen name="login" />
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen name="create-school" />
+                <Stack.Screen name="create-user" />
+                <Stack.Screen name="view-users" />
+                <Stack.Screen name="student-materials" />
+                <Stack.Screen name="settings" />
+                <Stack.Screen name="student-assignments" />
+                <Stack.Screen name="create-assignment" />
+                <Stack.Screen name="materials-list" />
+                <Stack.Screen name="assignment-details" />
+                <Stack.Screen name="edit-assignment" />
+                <Stack.Screen name="delete-assignment" />
+                <Stack.Screen name="assignment-submissions" />
+                <Stack.Screen name="teacher-assignments" />
+                <Stack.Screen name="student-assignment-list" />
+                <Stack.Screen name="submit-assignment" />
+                <Stack.Screen name="attendance" />
+                <Stack.Screen name="notes" />
+                <Stack.Screen name="notifications" />
+                <Stack.Screen name="add-recording" />
+                <Stack.Screen name="change-password" />
+              </Stack>
 
-              <Stack.Screen name="view-users" />
-              <Stack.Screen name="student-materials" />
-              <Stack.Screen name="settings" />
-              <Stack.Screen name="student-assignments" />
-              <Stack.Screen name="create-assignment" />
-              <Stack.Screen name="materials-list" />
-              <Stack.Screen name="assignment-details" />
-              <Stack.Screen name="edit-assignment" />
-              <Stack.Screen name="delete-assignment" />
-              <Stack.Screen name="assignment-submissions" />
-              <Stack.Screen name="teacher-assignments" />
-              <Stack.Screen name="student-assignment-list" />
-              <Stack.Screen name="submit-assignment" />
-            </Stack>
-          </SafeAreaProvider>
+              {/* Maintenance Mode Full Screen Blocker for Logged-In Non-Admins Only */}
+              {maintenanceActive && userRole && userRole !== 'admin' && (
+                <View style={layoutStyles.maintenanceOverlay}>
+                  <View style={layoutStyles.maintenanceCard}>
+                    <Ionicons name="construct-outline" size={48} color="#F59E0B" style={{ marginBottom: 16 }} />
+                    <Text style={layoutStyles.maintenanceTitle}>System Maintenance</Text>
+                    <Text style={layoutStyles.maintenanceMessage}>
+                      {maintenanceMessage || 'The app is currently undergoing scheduled maintenance. Please check back shortly.'}
+                    </Text>
+
+                    <TouchableOpacity
+                      style={layoutStyles.maintenanceRefreshBtn}
+                      onPress={checkMaintenance}
+                    >
+                      <Text style={layoutStyles.maintenanceRefreshBtnText}>Check Again</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={layoutStyles.maintenanceSignOutBtn}
+                      onPress={async () => {
+                        const { signOut } = await import('../lib/auth');
+                        await signOut();
+                        setMaintenanceActive(false);
+                        router.replace('/welcome');
+                      }}
+                    >
+                      <Text style={layoutStyles.maintenanceSignOutBtnText}>Sign Out</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </SafeAreaProvider>
+          </NotificationProvider>
         </ToastProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
 }
+
+const layoutStyles = StyleSheet.create({
+  maintenanceOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    zIndex: 999999,
+  },
+  maintenanceCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 20,
+    padding: 32,
+    maxWidth: 440,
+    width: '100%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 10 },
+    shadowRadius: 20,
+  },
+  maintenanceIcon: {
+    fontSize: 54,
+    marginBottom: 16,
+  },
+  maintenanceTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  maintenanceMessage: {
+    fontSize: 14,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  maintenanceRefreshBtn: {
+    backgroundColor: '#3B82F6',
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  maintenanceRefreshBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  maintenanceSignOutBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+  },
+  maintenanceSignOutBtnText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+});

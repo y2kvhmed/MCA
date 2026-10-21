@@ -177,9 +177,9 @@ export async function sendEmail(to: string[], template: EmailTemplate) {
           console.error(`Failed to send email to ${email}:`, response.statusText);
           results.push({ email, success: false, error: response.statusText });
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error(`Error sending email to ${email}:`, error);
-        results.push({ email, success: false, error: error.message });
+        results.push({ email, success: false, error: error?.message || 'Failed to send' });
       }
     }
 
@@ -195,9 +195,9 @@ export async function sendEmail(to: string[], template: EmailTemplate) {
         totalCount
       } 
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Email service error:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: error?.message || 'Email error' };
   }
 }
 

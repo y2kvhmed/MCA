@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getSubmissionById, updateSubmissionGrade } from '../lib/database';
+import { supabase } from '../lib/supabase';
 import { formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -31,14 +31,53 @@ export default function SubmissionDetails() {
   const loadSubmission = async () => {
     try {
       const submissionId = params.submissionId as string;
-      const { data, error } = await getSubmissionById(submissionId);
-      
-      if (error) throw error;
-      if (!data) throw new Error('Submission not found');
-      
-      setSubmission(data);
-      setGrade(data.grade?.toString() || '');
-      setFeedback(data.feedback || '');
+      let submissionData: any = null;
+      const { data, error } = await supabase
+        .from('submissions')
+        .select(`
+          *,
+          student:app_users(id, name, email, avatar_url),
+          assignment:assignments(id, title, description, max_score, due_date)
+        `)
+        .eq('id', submissionId)
+        .single();
+
+      if (error) {
+        console.warn('Submission join error, trying fallback:', error.message);
+        const { data: fbData, error: fbError } = await supabase
+          .from('submissions')
+          .select('*')
+          .eq('id', submissionId)
+          .single();
+        if (fbError) throw fbError;
+        let student = null;
+        if (fbData?.student_id) {
+          const { data: st } = await supabase
+            .from('app_users')
+            .select('id, name, email, avatar_url')
+            .eq('id', fbData.student_id)
+            .maybeSingle();
+          student = st;
+        }
+        let assignment = null;
+        if (fbData?.assignment_id) {
+          const { data: asg } = await supabase
+            .from('assignments')
+            .select('id, title, description, max_score, due_date')
+            .eq('id', fbData.assignment_id)
+            .maybeSingle();
+          assignment = asg;
+        }
+        submissionData = { ...fbData, student: student || { name: 'Student' }, assignment };
+      } else {
+        submissionData = data;
+      }
+
+      if (!submissionData) throw new Error('Submission not found');
+
+      setSubmission(submissionData);
+      setGrade(submissionData.grade?.toString() || '');
+      setFeedback(submissionData.feedback || '');
     } catch (error) {
       console.error('Load submission error:', error);
       handleError(error, 'Failed to load submission');
@@ -49,7 +88,7 @@ export default function SubmissionDetails() {
 
   const handleGradeSubmission = async () => {
     if (!submission) return;
-    
+
     const gradeNum = parseFloat(grade);
     if (isNaN(gradeNum) || gradeNum < 0) {
       Alert.alert('Invalid Grade', 'Please enter a valid grade (0 or higher)');
@@ -63,15 +102,93 @@ export default function SubmissionDetails() {
 
     setGrading(true);
     try {
-      const { error } = await updateSubmissionGrade(submission.id, gradeNum, feedback);
+      const { error } = await supabase
+        .from('submissions')
+        .update({
+          grade: gradeNum,
+          feedback,
+          status: 'graded',
+          graded_at: new Date().toISOString(),
+        })
+        .eq('id', submission.id);
+
       if (error) throw error;
-      
+
       showSuccess('Grade saved successfully');
-      loadSubmission(); // Reload to get updated data
+      loadSubmission();
     } catch (error) {
       handleError(error, 'Failed to save grade');
     } finally {
       setGrading(false);
+    }
+  };
+
+  const handleOpenFile = async () => {
+    try {
+      let filePath = submission?.file_path || '';
+      if (filePath.startsWith('http')) {
+        const parts = filePath.split('/submissions/');
+        if (parts.length > 1) {
+          filePath = decodeURIComponent(parts[1]);
+        }
+      }
+      if (filePath.startsWith('submissions/')) {
+        filePath = filePath.replace(/^submissions\//, '');
+      }
+
+      // 1. Direct stored URL
+      let fileUrl = submission?.file_url || '';
+
+      // 2. Or public storage URL from filePath
+      if (!fileUrl && filePath) {
+        const { data } = supabase.storage.from('submissions').getPublicUrl(filePath);
+        if (data?.publicUrl) fileUrl = data.publicUrl;
+      }
+
+      // 3. Or signed URL from filePath
+      if (!fileUrl && filePath) {
+        try {
+          const { data, error } = await supabase.storage
+            .from('submissions')
+            .createSignedUrl(filePath, 3600);
+          if (!error && data?.signedUrl) {
+            fileUrl = data.signedUrl;
+          }
+        } catch (e) {
+          console.warn('Signed URL error:', e);
+        }
+      }
+
+      // If we have a direct URL, open it directly so browser's native PDF reader renders it
+      if (fileUrl) {
+        if (typeof window !== 'undefined') {
+          window.open(fileUrl, '_blank');
+        } else {
+          await Linking.openURL(fileUrl);
+        }
+        return;
+      }
+
+      // Fallback on Web: download blob explicitly formatted as application/pdf
+      if (typeof window !== 'undefined' && filePath) {
+        try {
+          const { data: blobData, error: blobErr } = await supabase.storage
+            .from('submissions')
+            .download(filePath);
+          if (!blobErr && blobData) {
+            const pdfBlob = new Blob([blobData], { type: 'application/pdf' });
+            const blobUrl = window.URL.createObjectURL(pdfBlob);
+            window.open(blobUrl, '_blank');
+            return;
+          }
+        } catch (e) {
+          console.warn('Blob download error:', e);
+        }
+      }
+
+      handleError(null, 'No file available for this submission');
+    } catch (error) {
+      handleError(error, 'Failed to open file');
     }
   };
 
@@ -129,7 +246,7 @@ export default function SubmissionDetails() {
               <Ionicons name="person" size={24} color={Colors.text.inverse} />
             </View>
             <View>
-              <Text style={styles.studentName}>{submission.student?.name}</Text>
+              <Text style={styles.studentName}>{submission.student?.name || 'Unknown Student'}</Text>
               <Text style={styles.studentEmail}>{submission.student?.email}</Text>
             </View>
           </View>
@@ -138,7 +255,7 @@ export default function SubmissionDetails() {
         {/* Submission Info */}
         <Card style={styles.submissionCard}>
           <Text style={styles.sectionTitle}>Submission</Text>
-          
+
           <View style={styles.submissionMeta}>
             <View style={styles.metaRow}>
               <Ionicons name="time" size={16} color={Colors.text.secondary} />
@@ -146,11 +263,11 @@ export default function SubmissionDetails() {
                 Submitted {formatRelativeDate(submission.submitted_at)}
               </Text>
             </View>
-            
+
             {submission.file_url && (
               <View style={styles.metaRow}>
                 <Ionicons name="document" size={16} color={Colors.text.secondary} />
-                <Text style={styles.metaText}>File attached</Text>
+                <Text style={styles.metaText}>File attached: {submission.file_name || 'Document'}</Text>
               </View>
             )}
           </View>
@@ -163,9 +280,9 @@ export default function SubmissionDetails() {
           )}
 
           {submission.file_url && (
-            <TouchableOpacity style={styles.fileButton}>
-              <Ionicons name="download" size={16} color={Colors.primary} />
-              <Text style={styles.fileButtonText}>Download Attachment</Text>
+            <TouchableOpacity style={styles.fileButton} onPress={handleOpenFile}>
+              <Ionicons name="eye" size={16} color={Colors.primary} />
+              <Text style={styles.fileButtonText}>Open Attachment</Text>
             </TouchableOpacity>
           )}
         </Card>
@@ -173,7 +290,7 @@ export default function SubmissionDetails() {
         {/* Grading Section */}
         <Card style={styles.gradingCard}>
           <Text style={styles.sectionTitle}>Grading</Text>
-          
+
           <View style={styles.gradeRow}>
             <View style={styles.gradeInput}>
               <Input
@@ -184,7 +301,7 @@ export default function SubmissionDetails() {
                 placeholder="Enter grade"
               />
             </View>
-            
+
             {submission.grade !== null && (
               <View style={styles.currentGrade}>
                 <Text style={styles.currentGradeLabel}>Current:</Text>
@@ -266,6 +383,7 @@ const styles = StyleSheet.create({
   metaText: {
     fontSize: 12,
     color: Colors.text.secondary,
+    marginLeft: Spacing.xs,
   },
   studentCard: {
     marginBottom: Spacing.lg,

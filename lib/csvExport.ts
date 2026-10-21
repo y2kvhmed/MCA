@@ -162,17 +162,17 @@ export async function exportMonthlyAssignments(year: number, month: number, clas
     const csvData = data?.map(assignment => {
       const submissions = assignment.submissions || [];
       const totalStudents = submissions.length;
-      const submittedCount = submissions.filter(s => s.submitted_at).length;
-      const onTimeCount = submissions.filter(s => 
+      const submittedCount = submissions.filter((s: any) => s.submitted_at).length;
+      const onTimeCount = submissions.filter((s: any) => 
         s.submitted_at && new Date(s.submitted_at) <= new Date(assignment.due_date)
       ).length;
-      const lateCount = submissions.filter(s => 
+      const lateCount = submissions.filter((s: any) => 
         s.submitted_at && new Date(s.submitted_at) > new Date(assignment.due_date)
       ).length;
       const notSubmittedCount = totalStudents - submittedCount;
-      const gradedSubmissions = submissions.filter(s => s.grade !== null);
+      const gradedSubmissions = submissions.filter((s: any) => s.grade !== null);
       const averageGrade = gradedSubmissions.length > 0 ? 
-        gradedSubmissions.reduce((sum, s) => sum + s.grade, 0) / gradedSubmissions.length : 0;
+        gradedSubmissions.reduce((sum: number, s: any) => sum + s.grade, 0) / gradedSubmissions.length : 0;
 
       return {
         assignment_title: assignment.title,
@@ -250,10 +250,10 @@ export async function exportStudentPerformance(studentId: string) {
         Math.ceil((submissionDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
 
       return {
-        student_name: student.name,
-        student_email: student.email,
-        grade_level: student.grade_level || 'N/A',
-        school_name: student.school?.name || 'N/A',
+        student_name: (student as any)?.name,
+        student_email: (student as any)?.email,
+        grade_level: (student as any)?.grade_level || 'N/A',
+        school_name: Array.isArray((student as any)?.school) ? (student as any)?.school[0]?.name : (student as any)?.school?.name || 'N/A',
         assignment_title: submission.assignment.title,
         assignment_type: submission.assignment.assignment_type || 'assignment',
         teacher_name: submission.assignment.teacher?.name || 'N/A',

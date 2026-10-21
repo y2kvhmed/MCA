@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../../lib/auth';
-import { getStudentStats, getAssignmentsForStudent, getSubmissionsByStudent, getMaterialsForStudentFixed } from '../../lib/database';
+import { getStudentStats, getAssignmentsForStudent, getSubmissionsByStudent, getMaterialsForStudent } from '../../lib/database';
+import { useNotifications } from '../../contexts/NotificationContext';
 import { formatDueDate, handleError } from '../../lib/utils';
 import { loadStudentDashboard } from '../../lib/dashboardUtils';
 import Card from '../../components/Card';
@@ -14,11 +15,13 @@ import Button from '../../components/Button';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import DashboardErrorBoundary from '../../components/DashboardErrorBoundary';
+import RoleProtection from '../../components/RoleProtection';
 import { Colors } from '../../constants/Colors';
 import { Spacing } from '../../constants/Styles';
 
 export default function StudentDashboard() {
   const router = useRouter();
+  const { unreadCount } = useNotifications();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<any>({});
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -72,13 +75,6 @@ export default function StudentDashboard() {
     loadData();
   };
 
-  const getGradeColor = (percentage: number) => {
-    if (percentage >= 90) return Colors.success;
-    if (percentage >= 80) return Colors.info;
-    if (percentage >= 70) return Colors.warning;
-    return Colors.error;
-  };
-
   if (loading) {
     return <LoadingSpinner />;
   }
@@ -92,41 +88,81 @@ export default function StudentDashboard() {
       >
         {/* Welcome Header */}
         <FadeInView style={styles.header}>
-          <Text style={styles.welcomeText}>Welcome back,</Text>
-          <Text style={styles.userName}>{user?.name}</Text>
+          <View style={styles.headerContent}>
+            <View>
+              <Text style={styles.welcomeText}>Welcome back,</Text>
+              <Text style={styles.userName}>{user?.name}</Text>
+            </View>
+          </View>
         </FadeInView>
 
-        {/* Stats Cards */}
+        {/* Stats Cards - Centered with space between them */}
         <View style={styles.statsContainer}>
-          <AnimatedCard style={styles.statCard} delay={100}>
-            <View style={styles.statContent}>
-              <Ionicons name="folder" size={24} color={Colors.primary} />
-              <Text style={styles.statValue}>{stats.totalMaterials || 0}</Text>
-              <Text style={styles.statLabel}>Materials</Text>
-            </View>
-          </AnimatedCard>
+          <TouchableOpacity 
+            style={styles.statCardTouchable} 
+            onPress={() => router.push('/student-materials')}
+            activeOpacity={0.8}
+          >
+            <AnimatedCard style={styles.statCard} delay={100}>
+              <View style={styles.statContent}>
+                <Ionicons name="folder" size={26} color={Colors.primary} />
+                <Text style={styles.statValue}>{stats.totalMaterials || 0}</Text>
+                <Text style={styles.statLabel}>Materials</Text>
+              </View>
+            </AnimatedCard>
+          </TouchableOpacity>
           
-          <AnimatedCard style={styles.statCard} delay={200}>
-            <View style={styles.statContent}>
-              <Ionicons name="document-text" size={24} color={Colors.info} />
-              <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
-              <Text style={styles.statLabel}>Assignments</Text>
-            </View>
-          </AnimatedCard>
+          <TouchableOpacity 
+            style={styles.statCardTouchable} 
+            onPress={() => router.push('/student-assignment-list')}
+            activeOpacity={0.8}
+          >
+            <AnimatedCard style={styles.statCard} delay={200}>
+              <View style={styles.statContent}>
+                <Ionicons name="document-text" size={26} color={Colors.info} />
+                <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
+                <Text style={styles.statLabel}>Assignments</Text>
+              </View>
+            </AnimatedCard>
+          </TouchableOpacity>
           
-          <AnimatedCard style={styles.statCard} delay={300}>
-            <View style={styles.statContent}>
-              <Ionicons name="trophy" size={24} color={getGradeColor(stats.averageGrade || 0)} />
-              <Text style={[styles.statValue, { color: getGradeColor(stats.averageGrade || 0) }]}>
-                {stats.averageGrade ? `${stats.averageGrade}%` : 'N/A'}
-              </Text>
-              <Text style={styles.statLabel}>Avg Grade</Text>
-            </View>
-          </AnimatedCard>
+          <TouchableOpacity 
+            style={styles.statCardTouchable} 
+            onPress={() => router.push('/student-assignment-list')}
+            activeOpacity={0.8}
+          >
+            <AnimatedCard style={styles.statCard} delay={300}>
+              <View style={styles.statContent}>
+                <Ionicons name="checkmark-circle" size={26} color={Colors.success} />
+                <Text style={[styles.statValue, { color: Colors.success }]}>
+                  {stats.submittedCount || 0}
+                </Text>
+                <Text style={styles.statLabel}>Submitted</Text>
+              </View>
+            </AnimatedCard>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.statCardTouchable} 
+            onPress={() => router.push('/student-assignment-list')}
+            activeOpacity={0.8}
+          >
+            <AnimatedCard style={styles.statCard} delay={400}>
+              <View style={styles.statContent}>
+                <Ionicons name="pie-chart" size={26} color="#3B82F6" />
+                <Text style={[styles.statValue, { color: '#2563EB' }]}>
+                  {((stats.totalAssignments || 0) > 0)
+                    ? `${Math.round(((stats.submittedCount || 0) / (stats.totalAssignments || 1)) * 100)}%`
+                    : '0%'}
+                </Text>
+                <Text style={styles.statLabel}>Completion</Text>
+              </View>
+            </AnimatedCard>
+          </TouchableOpacity>
         </View>
 
         {/* Quick Actions */}
-        <AnimatedCard style={styles.actionsCard} delay={400}>
+        <AnimatedCard style={styles.actionsCard} delay={500}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.actionsGrid}>
             <TouchableOpacity 
@@ -156,6 +192,22 @@ export default function StudentDashboard() {
             >
               <Ionicons name="play-circle" size={24} color={Colors.warning} />
               <Text style={styles.actionText}>Videos</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/notes')}
+            >
+              <Ionicons name="document-text-outline" size={24} color="#9C27B0" />
+              <Text style={styles.actionText}>Teacher Notes</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/notifications')}
+            >
+              <Ionicons name="mail-outline" size={24} color="#FF5722" />
+              <Text style={styles.actionText}>Inbox</Text>
             </TouchableOpacity>
           </View>
         </AnimatedCard>
@@ -214,13 +266,7 @@ export default function StudentDashboard() {
                   </Text>
                 </View>
                 <View style={styles.submissionStatus}>
-                  {submission.grade !== null ? (
-                    <Text style={[styles.gradeText, { color: getGradeColor(submission.percentage || 0) }]}>
-                      {submission.grade}/{submission.assignment?.max_score}
-                    </Text>
-                  ) : (
-                    <Text style={styles.pendingText}>Pending</Text>
-                  )}
+                  <Text style={styles.submittedText}>Submitted</Text>
                 </View>
               </View>
             ))
@@ -244,6 +290,11 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     backgroundColor: Colors.card.background,
   },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   welcomeText: {
     fontSize: 16,
     color: Colors.text.secondary,
@@ -253,25 +304,48 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Colors.text.primary,
   },
+  notificationButton: {
+    position: 'relative',
+    padding: Spacing.sm,
+  },
+  badge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: Colors.error,
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: Colors.text.inverse,
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
   statsContainer: {
     flexDirection: 'row',
-    padding: Spacing.lg,
-    justifyContent: 'space-between',
-    alignItems: 'stretch',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
+  },
+  statCardTouchable: {
+    width: '46%',
   },
   statCard: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: Spacing.xs,
+    borderRadius: 14,
   },
   statContent: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.md,
-    minHeight: 100,
-    width: '100%',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    minHeight: 95,
   },
   statValue: {
     fontSize: 20,
@@ -393,13 +467,14 @@ const styles = StyleSheet.create({
   submissionStatus: {
     alignItems: 'flex-end',
   },
-  gradeText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
   pendingText: {
     fontSize: 14,
     color: Colors.warning,
+    fontWeight: '500',
+  },
+  submittedText: {
+    fontSize: 14,
+    color: Colors.success,
     fontWeight: '500',
   },
 });

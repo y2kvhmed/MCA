@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -57,28 +57,37 @@ export default function AssignmentManager() {
   };
 
   const handleDeleteAssignment = async (assignmentId: string, title: string) => {
-    Alert.alert(
-      'Delete Assignment',
-      `Are you sure you want to delete "${title}"? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const { error } = await deleteAssignment(assignmentId);
-              if (error) throw error;
-              
-              showSuccess('Assignment deleted successfully');
-              loadData(); // Refresh the list
-            } catch (error) {
-              handleError(error, 'Failed to delete assignment');
-            }
+    const doDelete = async () => {
+      try {
+        const { error } = await deleteAssignment(assignmentId);
+        if (error) throw error;
+        
+        showSuccess('Assignment deleted successfully');
+        loadData(); // Refresh the list
+      } catch (error) {
+        handleError(error, 'Failed to delete assignment');
+      }
+    };
+
+    const confirmMsg = `Are you sure you want to delete "${title}"? This action cannot be undone.`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMsg)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Assignment',
+        confirmMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Delete', 
+            style: 'destructive',
+            onPress: doDelete,
           }
-        }
-      ]
-    );
+        ]
+      );
+    }
   };
 
   const getFilteredAssignments = () => {

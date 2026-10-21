@@ -74,7 +74,7 @@ export class DueDateReminderService {
         if (hoursUntilDue <= 1 && hoursUntilDue > 0) {
           // Critical: Less than 1 hour
           this.sendNotification({
-            title: '🚨 Assignment Due Soon!',
+            title: 'Assignment Due Soon',
             body: `"${assignment.title}" is due in ${Math.round(hoursUntilDue * 60)} minutes`,
             urgency: 'critical',
             assignmentId: assignment.id,
@@ -82,7 +82,7 @@ export class DueDateReminderService {
         } else if (hoursUntilDue <= 6 && hoursUntilDue > 1) {
           // High: Less than 6 hours
           this.sendNotification({
-            title: '⏰ Assignment Due Today',
+            title: 'Assignment Due Today',
             body: `"${assignment.title}" is due in ${Math.round(hoursUntilDue)} hours`,
             urgency: 'high',
             assignmentId: assignment.id,
@@ -90,7 +90,7 @@ export class DueDateReminderService {
         } else if (hoursUntilDue <= 24 && hoursUntilDue > 6) {
           // Medium: Less than 24 hours
           this.sendNotification({
-            title: '📝 Assignment Due Tomorrow',
+            title: 'Assignment Due Tomorrow',
             body: `Don't forget: "${assignment.title}" is due tomorrow`,
             urgency: 'medium',
             assignmentId: assignment.id,

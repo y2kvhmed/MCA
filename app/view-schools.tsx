@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getSchools } from '../lib/database';
-import { handleError, showSuccess } from '../lib/utils';
+import { getSchools, deleteSchoolCompletely } from '../lib/database';
+import { handleError } from '../lib/utils';
+import { useToast } from '../contexts/ToastContext';
 import { supabase } from '../lib/supabase';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -15,6 +16,7 @@ import { Spacing } from '../constants/Styles';
 
 export default function ViewSchools() {
   const router = useRouter();
+  const { showSuccess, showError } = useToast();
   const [schools, setSchools] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,51 +38,45 @@ export default function ViewSchools() {
     }
   };
 
-  const handleDeleteSchool = async (schoolId: string, schoolName: string) => {
-    Alert.alert(
-      'Delete School',
-      `Are you sure you want to delete "${schoolName}"?\n\nThis will permanently delete:\n• All students and teachers (except admins)\n• All classes and assignments\n• All submissions and files\n• All school data\n\nThis action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setLoading(true);
-            try {
-              console.log('Attempting to delete school:', schoolId, schoolName);
-              
-              // Import the new delete function
-              const { deleteSchoolCompletely } = await import('../lib/database');
-              const result = await deleteSchoolCompletely(schoolId);
+  const handleDeleteSchool = (schoolId: string, schoolName: string) => {
+    const doDelete = async () => {
+      setLoading(true);
+      try {
+        console.log('Attempting to delete school:', schoolId, schoolName);
+        const result = await deleteSchoolCompletely(schoolId);
+        console.log('Delete result:', result);
 
-              console.log('Delete result:', result);
+        if (result.success) {
+          showSuccess(result.message || `School "${schoolName}" deleted successfully`);
+          await loadSchools();
+        } else {
+          console.error('School deletion failed:', result.error);
+          showError(result.error || 'Failed to delete school');
+        }
+      } catch (error: any) {
+        console.error('School deletion error:', error);
+        showError(error?.message || 'Failed to delete school');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-              if (result.success) {
-                showSuccess(result.message || `School "${schoolName}" deleted successfully`);
-                loadSchools(); // Reload schools
-              } else {
-                console.error('School deletion failed:', result.error);
-                Alert.alert(
-                  'Deletion Failed', 
-                  result.error || 'Failed to delete school. Please try again.',
-                  [{ text: 'OK' }]
-                );
-              }
-            } catch (error) {
-              console.error('School deletion error:', error);
-              Alert.alert(
-                'Error', 
-                `Failed to delete school: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                [{ text: 'OK' }]
-              );
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    const confirmMessage = `Are you sure you want to permanently delete "${schoolName}"?\n\nThis will remove the school and unassign all associated teachers and students. This action cannot be undone.`;
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMessage)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete School',
+        confirmMessage,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: doDelete },
+        ]
+      );
+    }
   };
 
   const handleEditSchool = (schoolId: string) => {

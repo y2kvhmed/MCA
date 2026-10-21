@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, Animated } from 'react-native';
+import { View, StyleSheet, Animated, Platform } from 'react-native';
 import { Colors } from '../constants/Colors';
 
 interface PendulumLoaderProps {
@@ -21,17 +21,17 @@ export default function PendulumLoader({
         Animated.timing(rotateAnim, {
           toValue: 1,
           duration: duration / 2,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(rotateAnim, {
           toValue: -1,
           duration: duration,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(rotateAnim, {
           toValue: 0,
           duration: duration / 2,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ]).start(() => startAnimation());
     };
@@ -94,13 +94,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 4,
     left: '50%',
-    marginLeft: -4, // Center the pivot
+    marginLeft: -4,
     zIndex: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 3,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0px 1px 2px rgba(0,0,0,0.2)'
+    } : {
+      elevation: 3
+    }),
   },
   pendulumGroup: {
     position: 'absolute',
@@ -115,10 +115,10 @@ const styles = StyleSheet.create({
   },
   bob: {
     borderRadius: 50,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
-    elevation: 6,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0px 3px 5px rgba(0,0,0,0.4)'
+    } : {
+      elevation: 6
+    }),
   },
 });

@@ -1,32 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import { getCurrentUser } from '../lib/auth';
-import { getSchools, createLesson } from '../lib/database';
-import { handleError, showSuccess } from '../lib/utils';
 import { supabase } from '../lib/supabase';
+import { handleError, showSuccess, formatFileSize } from '../lib/utils';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
-import NativeVideoPlayer from '../components/NativeVideoPlayer';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
 export default function AddRecording() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [schools, setSchools] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
+  // Form states
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [videoFile, setVideoFile] = useState<any>(null);
-  const [duration, setDuration] = useState('');
-  const [selectedSchool, setSelectedSchool] = useState<string>('all');
+  const [videoUrlInput, setVideoUrlInput] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState<number | null>(null);
+  const [durationStatus, setDurationStatus] = useState<string>('');
 
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  // Uploaded video state
+  const [uploadedVideo, setUploadedVideo] = useState<{
+    name: string;
+    size: number;
+    path: string;
+    url: string;
+  } | null>(null);
+
+  // Schools list and selection
+  const [schools, setSchools] = useState<any[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -35,298 +46,374 @@ export default function AddRecording() {
   const loadData = async () => {
     try {
       const currentUser = await getCurrentUser();
+      if (!currentUser) {
+        router.push('/login');
+        return;
+      }
       setUser(currentUser);
-      
-      // Load schools
-      const { data: schoolsData } = await getSchools();
-      if (schoolsData) setSchools(schoolsData);
-      
 
+      let availableSchools: any[] = [];
+
+      if (currentUser.role === 'admin') {
+        const { data: allSchools } = await supabase
+          .from('schools')
+          .select('id, name')
+          .order('name');
+        if (allSchools) availableSchools = allSchools;
+      } else {
+        // Teacher: load schools from teacher_schools
+        const { data: teacherSchools } = await supabase
+          .from('teacher_schools')
+          .select('school_id, schools(id, name)')
+          .eq('teacher_id', currentUser.id);
+
+        if (teacherSchools && teacherSchools.length > 0) {
+          availableSchools = teacherSchools
+            .map((ts: any) => ts.schools)
+            .filter(Boolean);
+        } else if (currentUser.school_id) {
+          const { data: directSchool } = await supabase
+            .from('schools')
+            .select('id, name')
+            .eq('id', currentUser.school_id)
+            .single();
+          if (directSchool) availableSchools = [directSchool];
+        }
+
+        if (availableSchools.length === 0) {
+          const { data: fallbackSchools } = await supabase
+            .from('schools')
+            .select('id, name')
+            .order('name');
+          if (fallbackSchools) availableSchools = fallbackSchools;
+        }
+      }
+
+      setSchools(availableSchools);
+      if (availableSchools.length > 0) {
+        setSelectedSchoolId(availableSchools[0].id);
+      }
     } catch (error) {
-      console.error('Load data error:', error);
+      handleError(error, 'Failed to load user or schools');
     } finally {
       setLoading(false);
     }
   };
 
-  const pickVideo = async () => {
+  // Auto-detect video/audio duration using HTML5 media element
+  const detectDuration = (fileOrBlob: File | Blob): Promise<number> => {
+    return new Promise((resolve) => {
+      try {
+        if (typeof document !== 'undefined') {
+          const video = document.createElement('video');
+          video.preload = 'metadata';
+          const blobUrl = URL.createObjectURL(fileOrBlob);
+
+          video.onloadedmetadata = () => {
+            URL.revokeObjectURL(blobUrl);
+            const totalSeconds = video.duration;
+            if (isFinite(totalSeconds) && totalSeconds > 0) {
+              const mins = Math.max(1, Math.round(totalSeconds / 60));
+              resolve(mins);
+            } else {
+              resolve(1);
+            }
+          };
+
+          video.onerror = () => {
+            URL.revokeObjectURL(blobUrl);
+            resolve(0);
+          };
+
+          video.src = blobUrl;
+        } else {
+          resolve(0);
+        }
+      } catch {
+        resolve(0);
+      }
+    });
+  };
+
+  const pickVideoFile = async () => {
     try {
-      const { DocumentPicker } = await import('expo-document-picker');
+      setUploading(true);
       const result = await DocumentPicker.getDocumentAsync({
-        type: 'video/*',
+        type: ['video/*', 'audio/*'],
         copyToCacheDirectory: true,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
         const file = result.assets[0];
-        
-        // Check file size (max 100MB)
-        if (file.size && file.size > 100 * 1024 * 1024) {
-          Alert.alert('Error', 'Video file size must be less than 100MB');
-          return;
+
+        // Read blob
+        let blob: Blob;
+        if (Platform.OS === 'web' && file.file) {
+          blob = file.file;
+        } else {
+          const response = await fetch(file.uri);
+          blob = await response.blob();
         }
 
-        setVideoFile(file);
-        showSuccess('Video file selected successfully');
-      }
-    } catch (error) {
-      console.error('Video picker error:', error);
-      handleError(error, 'Failed to pick video file');
-    }
-  };
+        // Auto-detect duration
+        setDurationStatus('Detecting video duration...');
+        const detectedMins = await detectDuration(blob);
+        if (detectedMins > 0) {
+          setDurationMinutes(detectedMins);
+          setDurationStatus(`${detectedMins} minute${detectedMins > 1 ? 's' : ''} (auto-detected)`);
+        } else {
+          setDurationMinutes(5); // Default sensible duration
+          setDurationStatus('5 minutes (estimated)');
+        }
 
-  const uploadVideoToSupabase = async (file: any) => {
-    try {
-      // Read file as blob
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
-      
-      // Create unique filename
-      const fileExt = file.name?.split('.').pop() || 'mp4';
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `videos/${selectedSchool === 'all' ? 'global' : selectedSchool}/${fileName}`;
+        // Upload to recordings / videos bucket
+        const fileExt = file.name ? file.name.split('.').pop() : 'mp4';
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const filePath = `recordings/${selectedSchoolId || 'global'}/${fileName}`;
 
-      // Try multiple bucket names for video upload
-      let uploadResult;
-      const bucketNames = ['videos', 'lessons', 'materials'];
-      
-      for (const bucketName of bucketNames) {
-        uploadResult = await supabase.storage
-          .from(bucketName)
+        console.log('Uploading video to recordings bucket:', filePath);
+
+        const { error: uploadError } = await supabase.storage
+          .from('recordings')
           .upload(filePath, blob, {
             contentType: file.mimeType || 'video/mp4',
-            upsert: false
+            upsert: false,
           });
-        
-        if (!uploadResult.error) {
-          // Get public URL
-          const { data: urlData } = supabase.storage
-            .from(bucketName)
-            .getPublicUrl(filePath);
 
-          return {
-            success: true,
-            path: filePath,
-            url: urlData.publicUrl,
-            bucket: bucketName
-          };
+        if (uploadError) {
+          console.warn('Recordings bucket upload failed, trying videos bucket:', uploadError);
+          const { error: videoBucketError } = await supabase.storage
+            .from('videos')
+            .upload(filePath, blob, {
+              contentType: file.mimeType || 'video/mp4',
+              upsert: false,
+            });
+          if (videoBucketError) throw videoBucketError;
         }
-      }
 
-      throw new Error(uploadResult?.error?.message || 'All upload attempts failed');
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Upload failed'
-      };
+        const { data: { publicUrl } } = supabase.storage
+          .from('recordings')
+          .getPublicUrl(filePath);
+
+        setUploadedVideo({
+          name: file.name || fileName,
+          size: file.size || blob.size,
+          path: filePath,
+          url: publicUrl,
+        });
+
+        showSuccess('Video uploaded successfully!');
+      }
+    } catch (error: any) {
+      console.error('Video upload error:', error);
+      Alert.alert('Upload Error', error?.message || 'Failed to upload video');
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSave = async () => {
     if (!title.trim()) {
-      handleError(null, 'Recording title is required');
+      Alert.alert('Required Field', 'Please enter a title for the recording');
       return;
     }
 
-    if (!videoFile) {
-      handleError(null, 'Video file is required');
+    if (!uploadedVideo) {
+      Alert.alert('Video Required', 'Please pick and upload a video file for this recording');
       return;
     }
 
-    if (selectedSchool !== 'all' && !selectedSchool) {
-      handleError(null, 'Please select a school for school-specific recording');
-      return;
-    }
-
-    setSubmitting(true);
+    setSaving(true);
     try {
-      // Upload video file to Supabase storage
-      const uploadResult = await uploadVideoToSupabase(videoFile);
-      
-      if (!uploadResult.success) {
-        throw new Error(uploadResult.error);
+      // Validate user ID is a valid UUID
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user?.id);
+      if (!isUUID) {
+        Alert.alert('Session Error', 'Your session contains an invalid user ID. Please log out and sign in with a real account.');
+        setSaving(false);
+        return;
       }
-      
-      const lessonData = {
+
+      const finalVideoUrl = uploadedVideo.url;
+      const finalVideoPath = uploadedVideo.path || null;
+      const finalDuration = durationMinutes || 10;
+
+      const recordingData = {
         title: title.trim(),
-        description: description.trim() || undefined,
-        video_path: uploadResult.path,
-        video_url: uploadResult.url,
-        duration_minutes: duration ? parseInt(duration) : undefined,
-        lesson_type: 'video',
+        description: description.trim() || null,
         teacher_id: user.id,
-        class_id: null,
-        school_id: selectedSchool === 'all' ? null : selectedSchool,
+        school_id: selectedSchoolId || null,
+        video_url: finalVideoUrl,
+        video_path: finalVideoPath,
+        video_name: uploadedVideo?.name || null,
+        video_size: uploadedVideo?.size || null,
+        duration_minutes: finalDuration,
+        duration: finalDuration * 60,
         is_published: true,
       };
 
-      const { error } = await createLesson(lessonData);
-      
+      console.log('Inserting lesson recording:', recordingData);
+
+      const { data, error } = await supabase
+        .from('lessons')
+        .insert(recordingData)
+        .select()
+        .single();
+
       if (error) {
-        handleError(error, 'Failed to add recording');
-      } else {
-        showSuccess(
-          selectedSchool === 'all' 
-            ? 'Recording uploaded and added for all schools' 
-            : 'Recording uploaded and added successfully'
-        );
-        router.back();
+        console.error('Insert lesson error:', error);
+        throw error;
       }
-    } catch (error) {
-      handleError(error, 'An unexpected error occurred');
+
+      showSuccess('Recording added successfully!');
+      handleBack();
+    } catch (error: any) {
+      console.error('Save recording error:', error);
+      handleError(error, 'Failed to save recording');
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
-
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/recordings');
+    }
+  };
 
   if (loading) {
     return <LoadingSpinner />;
   }
 
+  const isAdmin = user?.role === 'admin';
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Add Recording</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* School Selector */}
+        <View style={styles.sectionBox}>
+          <Text style={styles.sectionLabel}>
+            {isAdmin ? 'Target School (Admin):' : 'Select Assigned School:'}
+          </Text>
+          <View style={styles.schoolsGrid}>
+            {isAdmin && (
+              <TouchableOpacity
+                style={[
+                  styles.schoolChip,
+                  selectedSchoolId === null && styles.schoolChipActive,
+                ]}
+                onPress={() => setSelectedSchoolId(null)}
+              >
+                <Ionicons 
+                  name="globe-outline" 
+                  size={16} 
+                  color={selectedSchoolId === null ? Colors.text.inverse : Colors.primary} 
+                />
+                <Text style={[
+                  styles.schoolChipText,
+                  selectedSchoolId === null && styles.schoolChipTextActive,
+                ]}>
+                  All Schools
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {schools.map((school) => {
+              const isSelected = selectedSchoolId === school.id;
+              return (
+                <TouchableOpacity
+                  key={school.id}
+                  style={[styles.schoolChip, isSelected && styles.schoolChipActive]}
+                  onPress={() => setSelectedSchoolId(school.id)}
+                >
+                  <Ionicons 
+                    name="school-outline" 
+                    size={16} 
+                    color={isSelected ? Colors.text.inverse : Colors.primary} 
+                  />
+                  <Text style={[
+                    styles.schoolChipText,
+                    isSelected && styles.schoolChipTextActive,
+                  ]}>
+                    {school.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Title */}
         <Input
           label="Recording Title *"
           value={title}
           onChangeText={setTitle}
-          placeholder="Enter recording title"
+          placeholder="e.g., Lesson 4: Newton's Laws Explained"
         />
 
-        <Text style={styles.sectionTitle}>Add New Recording</Text>
-        
-        <Text style={styles.description}>
-          Upload video files directly to secure storage. Videos will be accessible only to students in your school.
-        </Text>
-        
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Video File *</Text>
-          <TouchableOpacity
-            style={styles.fileSelector}
-            onPress={pickVideo}
-          >
-            <Ionicons name="cloud-upload-outline" size={24} color={Colors.primary} />
-            <Text style={styles.fileSelectorText}>
-              {videoFile ? videoFile.name : 'Select Video File'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {videoFile && (
-          <View style={styles.previewContainer}>
-            <Text style={styles.previewLabel}>Selected File:</Text>
-            <Text style={styles.fileName}>{videoFile.name}</Text>
-          </View>
-        )}
-
+        {/* Description */}
         <Input
           label="Description"
           value={description}
           onChangeText={setDescription}
-          placeholder="Brief description of the recording"
+          placeholder="Notes or chapter details for students..."
           multiline
           numberOfLines={3}
         />
 
-        <Input
-          label="Duration (minutes)"
-          value={duration}
-          onChangeText={setDuration}
-          placeholder="45"
-          keyboardType="numeric"
-        />
+        {/* Video Upload Section */}
+        <View style={styles.uploadSection}>
+          <Text style={styles.uploadLabel}>Video File or Recording</Text>
 
-        <Text style={styles.label}>Availability *</Text>
-        <View style={styles.availabilitySelector}>
-          <TouchableOpacity
-            style={[
-              styles.availabilityButton,
-              selectedSchool === 'all' && styles.availabilityButtonSelected,
-            ]}
-            onPress={() => {
-              setSelectedSchool('all');
-            }}
-          >
-            <Text
-              style={[
-                styles.availabilityButtonText,
-                selectedSchool === 'all' && styles.availabilityButtonTextSelected,
-              ]}
+          {uploadedVideo ? (
+            <View style={styles.uploadedFileCard}>
+              <View style={styles.fileIconBox}>
+                <Ionicons name="videocam" size={26} color={Colors.warning} />
+              </View>
+              <View style={styles.fileDetails}>
+                <Text style={styles.fileName} numberOfLines={1}>{uploadedVideo.name}</Text>
+                <Text style={styles.fileSize}>{formatFileSize(uploadedVideo.size)}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setUploadedVideo(null)} style={styles.removeFileBtn}>
+                <Ionicons name="trash-outline" size={20} color={Colors.error} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity 
+              style={styles.dropZone} 
+              onPress={pickVideoFile}
+              disabled={uploading}
             >
-              All Schools
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.availabilityButton,
-              selectedSchool !== 'all' && styles.availabilityButtonSelected,
-            ]}
-            onPress={() => setSelectedSchool('')}
-          >
-            <Text
-              style={[
-                styles.availabilityButtonText,
-                selectedSchool !== 'all' && styles.availabilityButtonTextSelected,
-              ]}
-            >
-              Specific School
-            </Text>
-          </TouchableOpacity>
+              <Ionicons 
+                name={uploading ? "cloud-upload" : "videocam-outline"} 
+                size={40} 
+                color={Colors.warning} 
+              />
+              <Text style={styles.dropZoneText}>
+                {uploading ? 'Uploading Video...' : 'Pick & Upload Video File'}
+              </Text>
+              <Text style={styles.dropZoneSubtext}>
+                MP4, WebM, or MOV video files supported
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {selectedSchool !== 'all' && (
-          <>
-            <Text style={styles.label}>Select School *</Text>
-            <View style={styles.schoolSelector}>
-              {schools.map((school) => (
-                <TouchableOpacity
-                  key={school.id}
-                  style={[
-                    styles.schoolButton,
-                    selectedSchool === school.id && styles.schoolButtonSelected,
-                  ]}
-                  onPress={() => setSelectedSchool(school.id)}
-                >
-                  <Text
-                    style={[
-                      styles.schoolButtonText,
-                      selectedSchool === school.id && styles.schoolButtonTextSelected,
-                    ]}
-                  >
-                    {school.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {selectedSchool && selectedSchool !== 'all' && (
-              <View style={styles.schoolSelectedContainer}>
-                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
-                <Text style={styles.schoolSelectedText}>
-                  Recording will be available to all students in this school
-                </Text>
-              </View>
-            )}
-          </>
-        )}
-
         <Button
-          title="Add Recording"
-          onPress={handleSubmit}
-          loading={submitting}
-          disabled={submitting}
-          style={styles.submitButton}
+          title={saving ? "Saving Recording..." : "Post Recording"}
+          onPress={handleSave}
+          loading={saving}
+          disabled={saving || uploading}
+          style={styles.submitBtn}
         />
       </ScrollView>
     </SafeAreaView>
@@ -344,6 +431,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.lg,
     backgroundColor: Colors.card.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  backBtn: {
+    padding: Spacing.xs,
   },
   headerTitle: {
     fontSize: 20,
@@ -354,147 +446,146 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: Spacing.lg,
   },
-  label: {
+  sectionBox: {
+    backgroundColor: Colors.card.background,
+    padding: Spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    marginBottom: Spacing.lg,
+  },
+  sectionLabel: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
     color: Colors.text.primary,
     marginBottom: Spacing.sm,
   },
-  availabilitySelector: {
+  schoolsGrid: {
     flexDirection: 'row',
-    marginBottom: Spacing.xl,
+    flexWrap: 'wrap',
     gap: Spacing.sm,
   },
-  availabilityButton: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border.medium,
-    backgroundColor: Colors.card.background,
-    alignItems: 'center',
-  },
-  availabilityButtonSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  availabilityButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.text.primary,
-  },
-  availabilityButtonTextSelected: {
-    color: Colors.text.inverse,
-  },
-  schoolSelector: {
-    marginBottom: Spacing.xl,
-  },
-  schoolButton: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border.medium,
-    backgroundColor: Colors.card.background,
-    marginBottom: Spacing.sm,
-  },
-  schoolButtonSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  schoolButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.text.primary,
-  },
-  schoolButtonTextSelected: {
-    color: Colors.text.inverse,
-  },
-  classSelector: {
-    marginBottom: Spacing.xl,
-  },
-  classButton: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border.medium,
-    backgroundColor: Colors.card.background,
-    marginBottom: Spacing.sm,
-  },
-  classButtonSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  classButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.text.primary,
-  },
-  classButtonTextSelected: {
-    color: Colors.text.inverse,
-  },
-  submitButton: {
-    marginTop: Spacing.lg,
-    marginBottom: Spacing.xxxl,
-  },
-  previewContainer: {
-    marginBottom: Spacing.lg,
-  },
-  previewLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.text.primary,
-    marginBottom: Spacing.sm,
-  },
-  schoolSelectedContainer: {
+  schoolChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: Spacing.md,
-    backgroundColor: Colors.success + '20',
-    borderRadius: 8,
-    marginBottom: Spacing.xl,
-  },
-  schoolSelectedText: {
-    fontSize: 14,
-    color: Colors.success,
-    marginLeft: Spacing.sm,
-    flex: 1,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.text.primary,
-    marginBottom: Spacing.md,
-  },
-  description: {
-    fontSize: 16,
-    color: Colors.text.secondary,
-    marginBottom: Spacing.xl,
-    lineHeight: 22,
-  },
-  inputGroup: {
-    marginBottom: Spacing.lg,
-  },
-  fileSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.lg,
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.border.medium,
-    backgroundColor: Colors.card.background,
+    backgroundColor: Colors.background,
+  },
+  schoolChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  schoolChipText: {
+    fontSize: 13,
+    color: Colors.text.primary,
+    fontWeight: '500',
+  },
+  schoolChipTextActive: {
+    color: Colors.text.inverse,
+    fontWeight: '600',
+  },
+  uploadSection: {
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.lg,
+  },
+  uploadLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
+  },
+  dropZone: {
+    borderWidth: 2,
+    borderColor: Colors.border.medium,
     borderStyle: 'dashed',
+    borderRadius: 12,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.card.background,
   },
-  fileSelectorText: {
-    fontSize: 16,
-    color: Colors.text.primary,
-    marginLeft: Spacing.md,
+  dropZoneText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.primary,
+    marginTop: Spacing.sm,
+  },
+  dropZoneSubtext: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+  },
+  uploadedFileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card.background,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    borderRadius: 10,
+    padding: Spacing.md,
+    gap: Spacing.md,
+  },
+  fileIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: Colors.warning + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fileDetails: {
+    flex: 1,
   },
   fileName: {
     fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  fileSize: {
+    fontSize: 12,
     color: Colors.text.secondary,
-    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  removeFileBtn: {
+    padding: Spacing.xs,
+  },
+  urlDividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: Spacing.md,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border.light,
+  },
+  dividerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.text.tertiary,
+    marginHorizontal: Spacing.md,
+    letterSpacing: 1,
+  },
+  durationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.success + '15',
+    padding: Spacing.md,
+    borderRadius: 8,
+    marginTop: Spacing.xs,
+  },
+  durationCardText: {
+    fontSize: 13,
+    color: Colors.success,
+  },
+  submitBtn: {
+    marginBottom: Spacing.xxxl,
   },
 });
