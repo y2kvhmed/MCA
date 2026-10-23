@@ -96,53 +96,71 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
   }
 
   try {
-    // 1. Authenticate Request
-    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
-    const authHeader = req.headers.authorization;
-    const bearerToken = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : undefined;
-    const token = queryToken || bearerToken;
+    // 1. Anti-Hotlinking / Origin Validation
+    const referer = (req.headers.referer || req.headers.referrer || '') as string;
+    const host = (req.headers.host || '') as string;
 
-    if (!token) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized: Authentication token is required' }));
-      return;
+    if (referer) {
+      try {
+        const refUrl = new URL(referer);
+        const isAllowed = 
+          refUrl.hostname.includes('vercel.app') || 
+          refUrl.hostname.includes('localhost') || 
+          refUrl.hostname.includes('127.0.0.1') || 
+          refUrl.hostname === host;
+
+        if (!isAllowed) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Forbidden: External embedding is not permitted' }));
+          return;
+        }
+      } catch {
+        // Continue if referer URL cannot be parsed
+      }
     }
 
-    const { data: userData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !userData?.user) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized: Invalid or expired session' }));
-      return;
+    // 2. Validate User Status if userId is supplied
+    const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+    if (userId) {
+      const { data: userRecord } = await supabase
+        .from('app_users')
+        .select('id, is_active')
+        .eq('id', userId)
+        .single();
+
+      if (userRecord && userRecord.is_active === false) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden: User account is inactive' }));
+        return;
+      }
     }
 
-    // 2. Identify Video Target
-    const lessonId = typeof req.query.lessonId === 'string' ? req.query.lessonId : undefined;
+    // 3. Identify Video Target
     const rawFileId = typeof req.query.fileId === 'string' ? req.query.fileId : undefined;
     const rawVideoPath = typeof req.query.videoPath === 'string' ? req.query.videoPath : undefined;
+    const lessonId = typeof req.query.lessonId === 'string' ? req.query.lessonId : undefined;
 
     let targetVideoPath = rawVideoPath || '';
     let targetDriveId: string | null = rawFileId ? extractGoogleDriveId(rawFileId) : null;
 
-    if (lessonId) {
-      const { data: lesson, error: lessonError } = await supabase
+    // If fileId was not passed directly, check videoPath
+    if (!targetDriveId && targetVideoPath) {
+      targetDriveId = extractGoogleDriveId(targetVideoPath);
+    }
+
+    // If still not resolved, query lessons table from Supabase
+    if (!targetDriveId && lessonId) {
+      const { data: lesson } = await supabase
         .from('lessons')
         .select('id, video_url, video_path')
         .eq('id', lessonId)
         .single();
 
-      if (lessonError || !lesson) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Recording not found' }));
-        return;
+      if (lesson) {
+        const possibleSource = lesson.video_path || lesson.video_url || '';
+        targetDriveId = extractGoogleDriveId(possibleSource);
+        targetVideoPath = possibleSource;
       }
-
-      const possibleSource = lesson.video_path || lesson.video_url || '';
-      targetDriveId = extractGoogleDriveId(possibleSource);
-      targetVideoPath = possibleSource;
-    }
-
-    if (!targetDriveId && targetVideoPath) {
-      targetDriveId = extractGoogleDriveId(targetVideoPath);
     }
 
     if (!targetDriveId && !targetVideoPath) {
@@ -151,7 +169,7 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
       return;
     }
 
-    // 3. Handle Google Drive Streaming Relay
+    // 4. Handle Google Drive Streaming Relay
     if (targetDriveId) {
       const rangeHeader = req.headers.range;
       let targetUrl = `https://drive.usercontent.google.com/download?id=${targetDriveId}&export=download&confirm=t`;
@@ -170,6 +188,16 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
         headers: fetchHeaders,
         redirect: 'manual',
       });
+
+      // If usercontent returns 404, fallback to drive.google.com/uc
+      if (upstreamRes.status === 404) {
+        targetUrl = `https://drive.google.com/uc?export=download&id=${targetDriveId}&confirm=t`;
+        upstreamRes = await fetch(targetUrl, {
+          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers: fetchHeaders,
+          redirect: 'manual',
+        });
+      }
 
       const cookies: string[] = [];
       const c1 = upstreamRes.headers.get('set-cookie');
@@ -249,6 +277,20 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
 
           upstreamRes = secondRes;
         }
+      }
+
+      // If Google Drive returned an error status (e.g. 404 or 403)
+      if (upstreamRes.status >= 400) {
+        console.error(`Google Drive responded with ${upstreamRes.status} for fileId: ${targetDriveId}`);
+        res.writeHead(upstreamRes.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          error: 'Video unavailable', 
+          status: upstreamRes.status,
+          message: upstreamRes.status === 404 
+            ? 'The video was not found on Google Drive. Please verify the link.'
+            : 'Access denied by Google Drive. Ensure file sharing is set to "Anyone with the link can view".'
+        }));
+        return;
       }
 
       // Check if upstream successfully resolved video bytes or partial content

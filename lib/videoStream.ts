@@ -56,20 +56,27 @@ export function isGoogleDriveSource(pathOrUrl: string): boolean {
 export function getSecureStreamUrl(options: {
   lessonId?: string;
   videoPath?: string;
+  userId?: string;
   token?: string;
 }): string {
-  const { lessonId, videoPath, token } = options;
+  const { lessonId, videoPath, userId, token } = options;
   const params = new URLSearchParams();
 
-  if (lessonId) {
-    params.set('lessonId', lessonId);
-  } else if (videoPath) {
+  if (videoPath) {
     const driveId = extractGoogleDriveId(videoPath);
     if (driveId) {
       params.set('fileId', driveId);
     } else {
       params.set('videoPath', videoPath);
     }
+  }
+
+  if (lessonId) {
+    params.set('lessonId', lessonId);
+  }
+
+  if (userId) {
+    params.set('userId', userId);
   }
 
   if (token) {

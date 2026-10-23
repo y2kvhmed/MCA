@@ -105,9 +105,12 @@ export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay
 
       // Check if source is Google Drive or relay-enabled lesson
       if (isGoogleDriveSource(videoPath) || (lessonId && !parseStorageUrl(videoPath))) {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token || '';
-        const relayUrl = getSecureStreamUrl({ lessonId, videoPath, token });
+        const currentUser = await getCurrentUser();
+        const relayUrl = getSecureStreamUrl({ 
+          lessonId, 
+          videoPath, 
+          userId: currentUser?.id || '' 
+        });
         setVideoUri(relayUrl);
         setLoading(false);
         return;
