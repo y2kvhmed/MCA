@@ -6,6 +6,7 @@ import Button from './Button';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 import { RecordingFormData, validateRecordingForm } from '../lib/recordingService';
+import { extractGoogleDriveId } from '../lib/videoStream';
 import { useToast } from '../contexts/ToastContext';
 
 interface RecordingEditFormProps {
@@ -90,6 +91,7 @@ export default function RecordingEditForm({
   };
 
   const videoId = formData.video_url ? extractVideoId(formData.video_url) : '';
+  const driveId = formData.video_url ? extractGoogleDriveId(formData.video_url) : null;
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -162,8 +164,18 @@ export default function RecordingEditForm({
             style={styles.input}
           />
           
-          {/* Video Preview */}
-          {videoId && (
+          {/* Google Drive Status Badge */}
+          {driveId ? (
+            <View style={styles.driveBadge}>
+              <Ionicons name="shield-checkmark" size={18} color={Colors.success} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.driveBadgeTitle}>Google Drive Cloud Stream Linked</Text>
+                <Text style={styles.driveBadgeSubtitle} numberOfLines={1}>
+                  ID: {driveId} • Protected Relay Streaming Active
+                </Text>
+              </View>
+            </View>
+          ) : videoId ? (
             <View style={styles.videoPreview}>
               <Text style={styles.previewLabel}>Preview:</Text>
               <View style={styles.thumbnailContainer}>
@@ -171,7 +183,7 @@ export default function RecordingEditForm({
                 <Ionicons name="videocam" size={24} color={Colors.primary} />
               </View>
             </View>
-          )}
+          ) : null}
         </View>
 
         {/* Duration Field */}
@@ -326,5 +338,26 @@ const styles = StyleSheet.create({
     color: Colors.warning,
     marginLeft: Spacing.xs,
     fontWeight: '500',
+  },
+  driveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderRadius: 8,
+    padding: Spacing.sm,
+    gap: 8,
+    marginTop: Spacing.xs,
+  },
+  driveBadgeTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.success,
+  },
+  driveBadgeSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
   },
 });

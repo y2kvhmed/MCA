@@ -7,6 +7,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { handleError, showSuccess, formatFileSize } from '../lib/utils';
+import { extractGoogleDriveId } from '../lib/videoStream';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -20,11 +21,14 @@ export default function AddRecording() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
+  // Video Source Mode: Google Drive link or Local File upload
+  const [sourceType, setSourceType] = useState<'drive' | 'upload'>('drive');
+  const [driveLink, setDriveLink] = useState('');
+
   // Form states
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [videoUrlInput, setVideoUrlInput] = useState('');
-  const [durationMinutes, setDurationMinutes] = useState<number | null>(null);
+  const [durationMinutes, setDurationMinutes] = useState<number | null>(45);
   const [durationStatus, setDurationStatus] = useState<string>('');
 
   // Uploaded video state
@@ -218,9 +222,21 @@ export default function AddRecording() {
       return;
     }
 
-    if (!uploadedVideo) {
-      Alert.alert('Video Required', 'Please pick and upload a video file for this recording');
-      return;
+    const detectedDriveId = extractGoogleDriveId(driveLink);
+
+    if (sourceType === 'drive') {
+      if (!detectedDriveId) {
+        Alert.alert(
+          'Google Drive Link Required',
+          'Please paste a valid Google Drive link or file ID (e.g. https://drive.google.com/file/d/.../view).'
+        );
+        return;
+      }
+    } else {
+      if (!uploadedVideo) {
+        Alert.alert('Video Required', 'Please pick and upload a video file for this recording');
+        return;
+      }
     }
 
     setSaving(true);
@@ -233,9 +249,22 @@ export default function AddRecording() {
         return;
       }
 
-      const finalVideoUrl = uploadedVideo.url;
-      const finalVideoPath = uploadedVideo.path || null;
-      const finalDuration = durationMinutes || 10;
+      let finalVideoUrl = '';
+      let finalVideoPath: string | null = null;
+      let finalVideoName: string | null = null;
+      let finalVideoSize: number | null = null;
+      const finalDuration = durationMinutes || 45;
+
+      if (sourceType === 'drive' && detectedDriveId) {
+        finalVideoUrl = `https://drive.google.com/file/d/${detectedDriveId}/view`;
+        finalVideoPath = `gdrive://${detectedDriveId}`;
+        finalVideoName = `${title.trim()} (Google Drive Stream)`;
+      } else if (uploadedVideo) {
+        finalVideoUrl = uploadedVideo.url;
+        finalVideoPath = uploadedVideo.path || null;
+        finalVideoName = uploadedVideo.name || null;
+        finalVideoSize = uploadedVideo.size || null;
+      }
 
       const recordingData = {
         title: title.trim(),
@@ -244,8 +273,8 @@ export default function AddRecording() {
         school_id: selectedSchoolId || null,
         video_url: finalVideoUrl,
         video_path: finalVideoPath,
-        video_name: uploadedVideo?.name || null,
-        video_size: uploadedVideo?.size || null,
+        video_name: finalVideoName,
+        video_size: finalVideoSize,
         duration_minutes: finalDuration,
         duration: finalDuration * 60,
         is_published: true,
@@ -370,43 +399,144 @@ export default function AddRecording() {
           numberOfLines={3}
         />
 
-        {/* Video Upload Section */}
-        <View style={styles.uploadSection}>
-          <Text style={styles.uploadLabel}>Video File or Recording</Text>
-
-          {uploadedVideo ? (
-            <View style={styles.uploadedFileCard}>
-              <View style={styles.fileIconBox}>
-                <Ionicons name="videocam" size={26} color={Colors.warning} />
-              </View>
-              <View style={styles.fileDetails}>
-                <Text style={styles.fileName} numberOfLines={1}>{uploadedVideo.name}</Text>
-                <Text style={styles.fileSize}>{formatFileSize(uploadedVideo.size)}</Text>
-              </View>
-              <TouchableOpacity onPress={() => setUploadedVideo(null)} style={styles.removeFileBtn}>
-                <Ionicons name="trash-outline" size={20} color={Colors.error} />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity 
-              style={styles.dropZone} 
-              onPress={pickVideoFile}
-              disabled={uploading}
+        {/* Video Source Type Selector */}
+        <View style={styles.sourceSelectorContainer}>
+          <Text style={styles.sectionLabel}>Video Delivery Method</Text>
+          <View style={styles.tabSwitcher}>
+            <TouchableOpacity
+              style={[styles.tabButton, sourceType === 'drive' && styles.tabButtonActive]}
+              onPress={() => setSourceType('drive')}
             >
               <Ionicons 
-                name={uploading ? "cloud-upload" : "videocam-outline"} 
-                size={40} 
-                color={Colors.warning} 
+                name="cloud-outline" 
+                size={18} 
+                color={sourceType === 'drive' ? '#FFFFFF' : Colors.text.secondary} 
               />
-              <Text style={styles.dropZoneText}>
-                {uploading ? 'Uploading Video...' : 'Pick & Upload Video File'}
-              </Text>
-              <Text style={styles.dropZoneSubtext}>
-                MP4, WebM, or MOV video files supported
+              <Text style={[styles.tabButtonText, sourceType === 'drive' && styles.tabButtonTextActive]}>
+                Google Drive Stream
               </Text>
             </TouchableOpacity>
-          )}
+
+            <TouchableOpacity
+              style={[styles.tabButton, sourceType === 'upload' && styles.tabButtonActive]}
+              onPress={() => setSourceType('upload')}
+            >
+              <Ionicons 
+                name="arrow-up-circle-outline" 
+                size={18} 
+                color={sourceType === 'upload' ? '#FFFFFF' : Colors.text.secondary} 
+              />
+              <Text style={[styles.tabButtonText, sourceType === 'upload' && styles.tabButtonTextActive]}>
+                Upload File
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {/* Google Drive Stream Section */}
+        {sourceType === 'drive' ? (
+          <View style={styles.driveSectionBox}>
+            <View style={styles.driveHeaderRow}>
+              <Ionicons name="shield-checkmark" size={22} color={Colors.primary} />
+              <Text style={styles.driveHeaderTitle}>Bulletproof Cloud Relay Stream</Text>
+            </View>
+            <Text style={styles.driveHeaderSubtitle}>
+              Paste any Google Drive recording link. The file stays on Drive without using Supabase storage. Students stream through the secured in-app player with dynamic watermarks and never see the Drive link.
+            </Text>
+
+            <Input
+              label="Google Drive Link or File ID *"
+              value={driveLink}
+              onChangeText={setDriveLink}
+              placeholder="e.g., https://drive.google.com/file/d/.../view?usp=sharing"
+              autoCapitalize="none"
+            />
+
+            {/* Live Detection Badge */}
+            {extractGoogleDriveId(driveLink) ? (
+              <View style={styles.detectedCard}>
+                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.detectedTitle}>Google Drive File ID Verified</Text>
+                  <Text style={styles.detectedSubtitle} numberOfLines={1}>
+                    ID: {extractGoogleDriveId(driveLink)} • Protected Relay Streaming Active
+                  </Text>
+                </View>
+              </View>
+            ) : driveLink.trim().length > 0 ? (
+              <View style={styles.warningCard}>
+                <Ionicons name="alert-circle" size={20} color={Colors.warning} />
+                <Text style={styles.warningCardText}>
+                  Checking link format... Make sure to paste a valid Google Drive share link.
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Estimated Duration */}
+            <Input
+              label="Duration in Minutes"
+              value={durationMinutes ? durationMinutes.toString() : ''}
+              onChangeText={(text) => {
+                const val = parseInt(text.replace(/[^0-9]/g, ''), 10);
+                setDurationMinutes(isNaN(val) ? null : val);
+              }}
+              placeholder="e.g., 45"
+              keyboardType="number-pad"
+            />
+
+            <View style={styles.driveTipBox}>
+              <Ionicons name="information-circle-outline" size={18} color="#94A3B8" />
+              <Text style={styles.driveTipText}>
+                Remember to set the file sharing in Google Drive to "Anyone with the link can view". Students cannot see, copy, or download the original Drive URL.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          /* Video Upload Section */
+          <View style={styles.uploadSection}>
+            <Text style={styles.uploadLabel}>Video File Upload (Max 1GB)</Text>
+
+            {uploadedVideo ? (
+              <View style={styles.uploadedFileCard}>
+                <View style={styles.fileIconBox}>
+                  <Ionicons name="videocam" size={26} color={Colors.warning} />
+                </View>
+                <View style={styles.fileDetails}>
+                  <Text style={styles.fileName} numberOfLines={1}>{uploadedVideo.name}</Text>
+                  <Text style={styles.fileSize}>{formatFileSize(uploadedVideo.size)}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setUploadedVideo(null)} style={styles.removeFileBtn}>
+                  <Ionicons name="trash-outline" size={20} color={Colors.error} />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.dropZone} 
+                onPress={pickVideoFile}
+                disabled={uploading}
+              >
+                <Ionicons 
+                  name={uploading ? "cloud-upload" : "videocam-outline"} 
+                  size={40} 
+                  color={Colors.warning} 
+                />
+                <Text style={styles.dropZoneText}>
+                  {uploading ? 'Uploading Video...' : 'Pick & Upload Video File'}
+                </Text>
+                <Text style={styles.dropZoneSubtext}>
+                  MP4, WebM, or MOV video files supported
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {durationStatus ? (
+              <View style={styles.durationCard}>
+                <Ionicons name="time-outline" size={16} color={Colors.success} />
+                <Text style={styles.durationCardText}>{durationStatus}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
 
         <Button
           title={saving ? "Saving Recording..." : "Post Recording"}
@@ -584,6 +714,115 @@ const styles = StyleSheet.create({
   durationCardText: {
     fontSize: 13,
     color: Colors.success,
+  },
+  sourceSelectorContainer: {
+    marginBottom: Spacing.md,
+  },
+  tabSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#1E293B',
+    borderRadius: 10,
+    padding: 4,
+    gap: 6,
+    marginTop: Spacing.xs,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 6,
+  },
+  tabButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  tabButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  tabButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  driveSectionBox: {
+    backgroundColor: Colors.card.background,
+    padding: Spacing.lg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.25)',
+    marginBottom: Spacing.lg,
+  },
+  driveHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  driveHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  driveHeaderSubtitle: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    lineHeight: 18,
+    marginBottom: Spacing.md,
+  },
+  detectedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderRadius: 8,
+    padding: Spacing.sm,
+    gap: 10,
+    marginBottom: Spacing.md,
+  },
+  detectedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.success,
+  },
+  detectedSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  warningCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderRadius: 8,
+    padding: Spacing.sm,
+    gap: 8,
+    marginBottom: Spacing.md,
+  },
+  warningCardText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.warning,
+  },
+  driveTipBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    padding: Spacing.sm,
+    gap: 8,
+    marginTop: Spacing.xs,
+  },
+  driveTipText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#94A3B8',
+    lineHeight: 16,
   },
   submitBtn: {
     marginBottom: Spacing.xxxl,

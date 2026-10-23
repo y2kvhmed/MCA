@@ -6,7 +6,7 @@
   "framework": null,
   "rewrites": [
     {
-      "source": "/((?!_next|favicon.ico|.*\\.).*)",
+      "source": "/((?!api/|_next|favicon.ico|.*\\.).*)",
       "destination": "/index.html"
     }
   ],

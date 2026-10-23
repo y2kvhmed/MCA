@@ -7,13 +7,16 @@ import { Spacing } from '../constants/Styles';
 import { supabase } from '../lib/supabase';
 import { getCurrentUser } from '../lib/auth';
 
+import { isGoogleDriveSource, getSecureStreamUrl } from '../lib/videoStream';
+
 interface SecureVideoPlayerProps {
   videoPath: string;
+  lessonId?: string;
   title?: string;
   autoplay?: boolean;
 }
 
-export default function SecureVideoPlayer({ videoPath, title, autoplay = false }: SecureVideoPlayerProps) {
+export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay = false }: SecureVideoPlayerProps) {
   const [videoUri, setVideoUri] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
@@ -30,7 +33,7 @@ export default function SecureVideoPlayer({ videoPath, title, autoplay = false }
 
   useEffect(() => {
     loadSecureVideoUrl();
-  }, [videoPath]);
+  }, [videoPath, lessonId]);
 
   // Track fullscreen changes on web
   useEffect(() => {
@@ -96,6 +99,16 @@ export default function SecureVideoPlayer({ videoPath, title, autoplay = false }
       
       if (!videoPath) {
         setError('No video source provided');
+        setLoading(false);
+        return;
+      }
+
+      // Check if source is Google Drive or relay-enabled lesson
+      if (isGoogleDriveSource(videoPath) || (lessonId && !parseStorageUrl(videoPath))) {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || '';
+        const relayUrl = getSecureStreamUrl({ lessonId, videoPath, token });
+        setVideoUri(relayUrl);
         setLoading(false);
         return;
       }

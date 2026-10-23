@@ -274,6 +274,7 @@ export default function Recordings() {
                   <View style={styles.videoContainer}>
                     <SecureVideoPlayer 
                       videoPath={recording.video_path || recording.video_url}
+                      lessonId={recording.id}
                       title={recording.title}
                     />
                   </View>

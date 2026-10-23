@@ -9,6 +9,7 @@ import {
   RecordingFormData 
 } from '../lib/recordingService';
 import { handleError } from '../lib/utils';
+import { extractGoogleDriveId } from '../lib/videoStream';
 import RecordingEditForm from '../components/RecordingEditForm';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useToast } from '../contexts/ToastContext';
@@ -80,13 +81,19 @@ export default function EditRecording() {
     console.log('Attempting to save recording:', recordingId, formData);
     setSaving(true);
     try {
-      const updateData = {
+      const driveId = formData.video_url ? extractGoogleDriveId(formData.video_url) : null;
+      const updateData: any = {
         title: formData.title,
         description: formData.description,
         video_url: formData.video_url,
+        video_path: driveId ? `gdrive://${driveId}` : (formData.video_path || null),
         duration_minutes: formData.duration_minutes,
         last_edited_by: user.id,
       };
+
+      if (formData.duration_minutes) {
+        updateData.duration = formData.duration_minutes * 60;
+      }
 
       const { data, error } = await updateLesson(recordingId, updateData);
       
