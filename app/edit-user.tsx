@@ -52,27 +52,64 @@ export default function EditUser() {
       setName(userData.name);
       setPhone(userData.phone || '');
       setCurrentPassword(userData.password_hash || '');
-      setRole(userData.role);
+      const rawRole = (userData.role || 'student').toLowerCase().trim() as 'admin' | 'teacher' | 'student';
+      setRole(rawRole);
       setSchoolId(userData.school_id || '');
 
-      // Load schools
-      const { data: schoolsData } = await getSchools();
-      if (schoolsData) setSchools(schoolsData);
+      // Load schools reliably with direct query and fallback
+      let loadedSchools: any[] = [];
+      const { data: sData } = await supabase
+        .from('schools')
+        .select('*')
+        .order('name', { ascending: true });
+      if (sData && sData.length > 0) {
+        loadedSchools = sData;
+      } else {
+        const { data: dbSchools } = await getSchools();
+        if (dbSchools) loadedSchools = dbSchools;
+      }
+      setSchools(loadedSchools);
 
       // If teacher, load assigned schools from teacher_schools
-      if (userData.role === 'teacher') {
+      if (rawRole === 'teacher') {
         const teacherSchoolIds = await getTeacherSchoolIds(userId as string);
         if (teacherSchoolIds && teacherSchoolIds.length > 0) {
           setSelectedTeacherSchools(teacherSchoolIds);
         } else if (userData.school_id) {
           setSelectedTeacherSchools([userData.school_id]);
         }
+      } else if (userData.school_id) {
+        // Pre-fill teacher schools so if role is switched to teacher, their school is ready
+        setSelectedTeacherSchools([userData.school_id]);
       }
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load user data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRoleChange = (newRole: 'admin' | 'teacher' | 'student') => {
+    if (role === newRole) return;
+    setRole(newRole);
+
+    if (newRole === 'teacher') {
+      if (selectedTeacherSchools.length === 0) {
+        if (schoolId) {
+          setSelectedTeacherSchools([schoolId]);
+        } else if (schools.length > 0) {
+          setSelectedTeacherSchools([schools[0].id]);
+        }
+      }
+    } else if (newRole === 'student') {
+      if (!schoolId) {
+        if (selectedTeacherSchools.length > 0) {
+          setSchoolId(selectedTeacherSchools[0]);
+        } else if (schools.length > 0) {
+          setSchoolId(schools[0].id);
+        }
+      }
     }
   };
 
@@ -128,14 +165,17 @@ export default function EditUser() {
 
     setSaving(true);
     try {
-      const primarySchool = role === 'student' ? schoolId : (selectedTeacherSchools[0] || null);
+      const primarySchool = role === 'student' 
+        ? schoolId 
+        : (role === 'teacher' ? (selectedTeacherSchools[0] || null) : null);
 
       const updateData: any = {
         email: email.trim().toLowerCase(),
         name: name.trim(),
         phone: phone.trim() || null,
-        role,
+        role: role,
         school_id: primarySchool,
+        updated_at: new Date().toISOString(),
       };
 
       if (newPassword.trim()) {
@@ -147,16 +187,22 @@ export default function EditUser() {
         updateData.password_hash = newPassword.trim();
       }
 
-      const { error } = await supabase
+      const { error: userError } = await supabase
         .from('app_users')
         .update(updateData)
         .eq('id', userId);
 
-      if (error) throw error;
+      if (userError) throw userError;
 
-      // Sync teacher_schools if role is teacher
+      // Handle teacher_schools table cleanly
       if (role === 'teacher') {
         await setTeacherSchools(userId as string, selectedTeacherSchools);
+      } else {
+        // If changed to student or admin, clean up any previous teacher_schools links!
+        await supabase
+          .from('teacher_schools')
+          .delete()
+          .eq('teacher_id', userId);
       }
 
       showSuccess('User updated successfully');
@@ -252,7 +298,7 @@ export default function EditUser() {
               styles.roleButton,
               role === 'admin' && styles.roleButtonSelected,
             ]}
-            onPress={() => setRole('admin')}
+            onPress={() => handleRoleChange('admin')}
           >
             <Text
               style={[
@@ -269,7 +315,7 @@ export default function EditUser() {
               styles.roleButton,
               role === 'teacher' && styles.roleButtonSelected,
             ]}
-            onPress={() => setRole('teacher')}
+            onPress={() => handleRoleChange('teacher')}
           >
             <Text
               style={[
@@ -286,7 +332,7 @@ export default function EditUser() {
               styles.roleButton,
               role === 'student' && styles.roleButtonSelected,
             ]}
-            onPress={() => setRole('student')}
+            onPress={() => handleRoleChange('student')}
           >
             <Text
               style={[
@@ -299,49 +345,60 @@ export default function EditUser() {
           </TouchableOpacity>
         </View>
 
+        {/* Dynamic School Section based on Selected Role */}
         {role === 'student' && (
-          <>
-            <Text style={styles.label}>School *</Text>
-            <View style={styles.schoolSelector}>
-              {schools.map((school) => {
-                const isSelected = schoolId === school.id;
-                return (
-                  <TouchableOpacity
-                    key={school.id}
-                    style={[
-                      styles.schoolButton,
-                      isSelected && styles.schoolButtonSelected,
-                    ]}
-                    onPress={() => setSchoolId(school.id)}
-                  >
-                    <View style={styles.schoolRow}>
-                      <Ionicons
-                        name={isSelected ? "radio-button-on" : "radio-button-off"}
-                        size={18}
-                        color={isSelected ? Colors.text.inverse : Colors.text.secondary}
-                        style={{ marginRight: 10 }}
-                      />
-                      <Text
-                        style={[
-                          styles.schoolButtonText,
-                          isSelected && styles.schoolButtonTextSelected,
-                        ]}
-                      >
-                        {school.name}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </>
+          <View style={styles.schoolSectionContainer}>
+            <Text style={styles.label}>Assigned School *</Text>
+            <Text style={styles.subLabel}>
+              Select the school this student is enrolled in (1 required):
+            </Text>
+            {schools.length === 0 ? (
+              <View style={styles.noSchoolsNotice}>
+                <Ionicons name="information-circle-outline" size={18} color={Colors.text.secondary} />
+                <Text style={styles.noSchoolsNoticeText}>No schools registered in the system yet. Please add a school first.</Text>
+              </View>
+            ) : (
+              <View style={styles.schoolSelector}>
+                {schools.map((school) => {
+                  const isSelected = schoolId === school.id;
+                  return (
+                    <TouchableOpacity
+                      key={school.id}
+                      style={[
+                        styles.schoolButton,
+                        isSelected && styles.schoolButtonSelected,
+                      ]}
+                      onPress={() => setSchoolId(school.id)}
+                    >
+                      <View style={styles.schoolRow}>
+                        <Ionicons
+                          name={isSelected ? "radio-button-on" : "radio-button-off"}
+                          size={18}
+                          color={isSelected ? Colors.text.inverse : Colors.text.secondary}
+                          style={{ marginRight: 10 }}
+                        />
+                        <Text
+                          style={[
+                            styles.schoolButtonText,
+                            isSelected && styles.schoolButtonTextSelected,
+                          ]}
+                        >
+                          {school.name}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
         )}
 
         {role === 'teacher' && (
-          <>
+          <View style={styles.schoolSectionContainer}>
             <View style={styles.multiSchoolHeader}>
               <Text style={styles.label}>
-                Assigned Schools * ({selectedTeacherSchools.length}/{schools.length})
+                Assigned Schools * ({selectedTeacherSchools.length}/{schools.length} selected)
               </Text>
               {schools.length > 0 && (
                 <TouchableOpacity onPress={toggleSelectAllSchools} style={styles.selectAllBtn}>
@@ -352,41 +409,57 @@ export default function EditUser() {
               )}
             </View>
             <Text style={styles.subLabel}>
-              Teachers can be assigned to multiple schools. Select all that apply.
+              Teachers can be assigned to multiple schools. Select all that apply (at least 1 required):
             </Text>
-            <View style={styles.schoolSelector}>
-              {schools.map((school) => {
-                const isSelected = selectedTeacherSchools.includes(school.id);
-                return (
-                  <TouchableOpacity
-                    key={school.id}
-                    style={[
-                      styles.schoolButton,
-                      isSelected && styles.schoolButtonSelected,
-                    ]}
-                    onPress={() => toggleTeacherSchool(school.id)}
-                  >
-                    <View style={styles.schoolRow}>
-                      <Ionicons
-                        name={isSelected ? "checkbox" : "square-outline"}
-                        size={18}
-                        color={isSelected ? Colors.text.inverse : Colors.text.secondary}
-                        style={{ marginRight: 10 }}
-                      />
-                      <Text
-                        style={[
-                          styles.schoolButtonText,
-                          isSelected && styles.schoolButtonTextSelected,
-                        ]}
-                      >
-                        {school.name}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </>
+            {schools.length === 0 ? (
+              <View style={styles.noSchoolsNotice}>
+                <Ionicons name="information-circle-outline" size={18} color={Colors.text.secondary} />
+                <Text style={styles.noSchoolsNoticeText}>No schools registered in the system yet. Please add a school first.</Text>
+              </View>
+            ) : (
+              <View style={styles.schoolSelector}>
+                {schools.map((school) => {
+                  const isSelected = selectedTeacherSchools.includes(school.id);
+                  return (
+                    <TouchableOpacity
+                      key={school.id}
+                      style={[
+                        styles.schoolButton,
+                        isSelected && styles.schoolButtonSelected,
+                      ]}
+                      onPress={() => toggleTeacherSchool(school.id)}
+                    >
+                      <View style={styles.schoolRow}>
+                        <Ionicons
+                          name={isSelected ? "checkbox" : "square-outline"}
+                          size={18}
+                          color={isSelected ? Colors.text.inverse : Colors.text.secondary}
+                          style={{ marginRight: 10 }}
+                        />
+                        <Text
+                          style={[
+                            styles.schoolButtonText,
+                            isSelected && styles.schoolButtonTextSelected,
+                          ]}
+                        >
+                          {school.name}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {role === 'admin' && (
+          <View style={styles.adminNoticeBox}>
+            <Ionicons name="shield-checkmark" size={20} color={Colors.primary} />
+            <Text style={styles.adminNoticeText}>
+              Administrator role selected. Administrators have full system-wide access across all schools.
+            </Text>
+          </View>
         )}
 
         <View style={styles.passwordSection}>
@@ -502,6 +575,42 @@ const styles = StyleSheet.create({
   },
   roleButtonTextSelected: {
     color: Colors.text.inverse,
+  },
+  schoolSectionContainer: {
+    marginBottom: Spacing.md,
+  },
+  noSchoolsNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    borderRadius: 8,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  noSchoolsNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text.secondary,
+  },
+  adminNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.primary + '12',
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
+    borderRadius: 8,
+    padding: Spacing.md,
+    marginBottom: Spacing.xl,
+  },
+  adminNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text.primary,
+    lineHeight: 18,
   },
   schoolSelector: {
     marginBottom: Spacing.xl,

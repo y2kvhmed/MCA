@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, FlatList, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getUsers, deleteUser, deactivateUser, activateUser } from '../lib/database';
 import { getCurrentUser } from '../lib/auth';
@@ -22,9 +22,11 @@ export default function ViewUsers() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadUsers();
+    }, [])
+  );
 
   useEffect(() => {
     filterUsers();

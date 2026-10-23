@@ -54,7 +54,7 @@ export default function NativeVideoPlayer({
       console.log('Trying videos bucket with path:', videoPath);
       const { data: videosData, error: videosError } = await supabase.storage
         .from('videos')
-        .createSignedUrl(videoPath, 3600);
+        .createSignedUrl(videoPath, 9000);
       
       if (!videosError && videosData?.signedUrl) {
         console.log('Found video in videos bucket');
@@ -91,7 +91,7 @@ export default function NativeVideoPlayer({
         
         const { data, error } = await supabase.storage
           .from(bucket)
-          .createSignedUrl(videoPath, 3600);
+          .createSignedUrl(videoPath, 9000);
         
         if (!error && data?.signedUrl) {
           console.log('Found video in bucket:', bucket);
@@ -105,7 +105,7 @@ export default function NativeVideoPlayer({
           const pathWithoutPrefix = videoPath.replace('recordings/', '');
           const { data: data2, error: error2 } = await supabase.storage
             .from(bucket)
-            .createSignedUrl(pathWithoutPrefix, 3600);
+            .createSignedUrl(pathWithoutPrefix, 9000);
           
           if (!error2 && data2?.signedUrl) {
             console.log('Found video in bucket with modified path:', bucket);

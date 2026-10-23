@@ -1,15 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getUsersBySchool, updateUserPassword, deleteUser } from '../lib/database';
+import { getUsersBySchool, deleteUser } from '../lib/database';
 import { supabase } from '../lib/supabase';
 import { handleError } from '../lib/utils';
 import Card from '../components/Card';
-import Input from '../components/Input';
-import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useToast } from '../contexts/ToastContext';
 import { Colors } from '../constants/Colors';
@@ -21,12 +19,13 @@ export default function ManageUsers() {
   const [user, setUser] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingUser, setEditingUser] = useState<any>(null);
-  const [newEmail, setNewEmail] = useState('');
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Auto-refresh user list whenever returning to this screen
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
 
   const loadData = async () => {
     try {
@@ -78,8 +77,7 @@ export default function ManageUsers() {
   };
 
   const handleEditUser = (userToEdit: any) => {
-    setEditingUser(userToEdit);
-    setNewEmail(userToEdit.email);
+    router.push(`/edit-user?userId=${userToEdit.id}`);
   };
 
   const confirmDeleteUser = (userItem: any) => {
@@ -94,10 +92,6 @@ export default function ManageUsers() {
         const { error } = await deleteUser(userItem.id);
         if (error) throw error;
         showSuccess(`User "${userItem.name}" deleted successfully`);
-        if (editingUser?.id === userItem.id) {
-          setEditingUser(null);
-          setNewEmail('');
-        }
         await loadData();
       } catch (err: any) {
         console.error('Delete user error:', err);
@@ -122,42 +116,6 @@ export default function ManageUsers() {
     }
   };
 
-  const handleSaveChanges = async () => {
-    if (!editingUser) return;
-
-    try {
-      const updates: any = {};
-      
-      if (newEmail !== editingUser.email) {
-        updates.email = newEmail;
-      }
-
-      if (Object.keys(updates).length === 0) {
-        showError('No changes to save');
-        return;
-      }
-
-      const { error } = await updateUserPassword(editingUser.id, updates);
-      
-      if (error) {
-        throw error;
-      }
-
-      showSuccess('User updated successfully');
-      setEditingUser(null);
-      setNewEmail('');
-      loadData();
-    } catch (error) {
-      console.error('Update error:', error);
-      handleError(error, 'Failed to update user');
-    }
-  };
-
-  const handleCancel = () => {
-    setEditingUser(null);
-    setNewEmail('');
-  };
-
   if (loading) {
     return <LoadingSpinner />;
   }
@@ -169,43 +127,22 @@ export default function ManageUsers() {
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Manage Users</Text>
-        <View style={{ width: 24 }} />
+        <TouchableOpacity onPress={() => router.push('/create-user')}>
+          <Ionicons name="person-add" size={22} color={Colors.primary} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content}>
-        {editingUser && (
-          <Card style={styles.editCard}>
-            <Text style={styles.editTitle}>Edit User: {editingUser.name}</Text>
-            
-            <Input
-              label="Email"
-              value={newEmail}
-              onChangeText={setNewEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            
-            <View style={styles.editActions}>
-              <Button
-                title="Cancel"
-                onPress={handleCancel}
-                variant="outline"
-                style={styles.editButton}
-              />
-              <Button
-                title="Save Changes"
-                onPress={handleSaveChanges}
-                style={styles.editButton}
-              />
-            </View>
-          </Card>
-        )}
-
         <Card style={styles.usersCard}>
           <Text style={styles.sectionTitle}>Users ({users.length})</Text>
           
           {users.map((userItem) => (
-            <View key={userItem.id} style={styles.userItem}>
+            <TouchableOpacity 
+              key={userItem.id} 
+              style={styles.userItem}
+              activeOpacity={0.7}
+              onPress={() => handleEditUser(userItem)}
+            >
               <View style={styles.userIcon}>
                 <Ionicons 
                   name={userItem.role === 'teacher' ? 'person' : 'school'} 
@@ -218,14 +155,17 @@ export default function ManageUsers() {
                 <Text style={styles.userName}>{userItem.name}</Text>
                 <Text style={styles.userEmail}>{userItem.email}</Text>
                 <Text style={styles.userRole}>
-                  {userItem.role} • {userItem.schoolDisplay || userItem.school?.name || 'No School'}
+                  {userItem.role?.toUpperCase()} • {userItem.schoolDisplay || userItem.school?.name || 'No School'}
                 </Text>
               </View>
               
               <View style={styles.userActions}>
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => handleEditUser(userItem)}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    handleEditUser(userItem);
+                  }}
                   accessibilityLabel="Edit User"
                 >
                   <Ionicons name="create-outline" size={20} color={Colors.primary} />
@@ -238,14 +178,17 @@ export default function ManageUsers() {
                 ) : (
                   <TouchableOpacity
                     style={[styles.actionButton, styles.deleteButton]}
-                    onPress={() => confirmDeleteUser(userItem)}
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      confirmDeleteUser(userItem);
+                    }}
                     accessibilityLabel="Delete User"
                   >
                     <Ionicons name="trash-outline" size={20} color={Colors.error} />
                   </TouchableOpacity>
                 )}
               </View>
-            </View>
+            </TouchableOpacity>
           ))}
         </Card>
       </ScrollView>

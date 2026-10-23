@@ -218,7 +218,7 @@ export async function getSecureVideoUrl(videoPath: string): Promise<string | nul
   try {
     const { data, error } = await supabase.storage
       .from('videos')
-      .createSignedUrl(videoPath, 3600); // 1 hour expiry
+      .createSignedUrl(videoPath, 9000); // 2.5 hours expiry
 
     if (error) {
       console.error('Error getting video URL:', error);
@@ -237,7 +237,7 @@ export async function getSecureFileUrl(filePath: string, bucket: string = 'submi
   try {
     const { data, error } = await supabase.storage
       .from(bucket)
-      .createSignedUrl(filePath, 3600); // 1 hour expiry
+      .createSignedUrl(filePath, 9000); // 2.5 hours expiry
 
     if (error) {
       console.error('Error getting file URL:', error);

@@ -11,6 +11,7 @@ import AnimatedCard from '../../components/AnimatedCard';
 import FadeInView from '../../components/FadeInView';
 import Button from '../../components/Button';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import StudentPerformanceAnalytics from '../../components/StudentPerformanceAnalytics';
 import { Colors } from '../../constants/Colors';
 import { Spacing } from '../../constants/Styles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -213,29 +214,16 @@ export default function StudentProfile() {
           </View>
         </AnimatedCard>
 
-        {/* Academic Stats */}
-        <AnimatedCard style={styles.statsCard} delay={200}>
-          <Text style={styles.sectionTitle}>Academic Overview</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Ionicons name="document-text" size={24} color={Colors.info} />
-              <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
-              <Text style={styles.statLabel}>Assignments</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
-              <Text style={styles.statValue}>{stats.completedAssignments || 0}</Text>
-              <Text style={styles.statLabel}>Submitted</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="close-circle" size={24} color={Colors.error} />
-              <Text style={[styles.statValue, { color: Colors.error }]}>
-                {Math.max(0, (stats.totalAssignments || 0) - (stats.completedAssignments || 0))}
-              </Text>
-              <Text style={styles.statLabel}>Missing</Text>
-            </View>
-          </View>
-        </AnimatedCard>
+        {/* Academic Analytics, Attendance, & Test Results */}
+        {user && (
+          <StudentPerformanceAnalytics
+            student={user}
+            isTeacherOrAdmin={false}
+            totalAssignments={stats.totalAssignments || 0}
+            submittedAssignments={stats.completedAssignments || 0}
+            onRefreshParent={loadData}
+          />
+        )}
 
         {/* Contact Information */}
         <AnimatedCard style={styles.contactCard} delay={300}>

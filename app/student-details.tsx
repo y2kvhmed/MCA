@@ -3,18 +3,21 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { getCurrentUser } from '../lib/auth';
 import { getUserById, getStudentSubmissions, getAssignmentsBySchool } from '../lib/database';
 import { formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import { exportToCSV } from '../lib/csvExport';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import StudentPerformanceAnalytics from '../components/StudentPerformanceAnalytics';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
 export default function StudentDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [student, setStudent] = useState<any>(null);
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -30,6 +33,9 @@ export default function StudentDetails() {
     try {
       const studentId = params.studentId as string;
       
+      const authUser = await getCurrentUser();
+      if (authUser) setCurrentUser(authUser);
+
       // Load student details
       const { data: studentData } = await getUserById(studentId);
       if (studentData) {
@@ -157,31 +163,14 @@ export default function StudentDetails() {
           </View>
         </Card>
 
-        {/* Statistics */}
-        <Card style={styles.statsCard}>
-          <Text style={styles.sectionTitle}>Performance Overview</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
-              <Text style={styles.statValue}>{submittedCount}</Text>
-              <Text style={styles.statLabel}>Submitted</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="close-circle" size={24} color={Colors.error} />
-              <Text style={styles.statValue}>{missingCount}</Text>
-              <Text style={styles.statLabel}>Missing</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="pie-chart" size={24} color={Colors.primary} />
-              <Text style={styles.statValue}>
-                {assignments.length > 0
-                  ? `${Math.round((submittedCount / assignments.length) * 100)}%`
-                  : (submittedCount > 0 ? '100%' : '0%')}
-              </Text>
-              <Text style={styles.statLabel}>Submission Rate</Text>
-            </View>
-          </View>
-        </Card>
+        {/* Performance Analytics & Test Results */}
+        <StudentPerformanceAnalytics
+          student={student}
+          isTeacherOrAdmin={currentUser?.role === 'teacher' || currentUser?.role === 'admin'}
+          totalAssignments={totalAssignments}
+          submittedAssignments={submittedCount}
+          onRefreshParent={loadData}
+        />
 
         {/* Assignment Status */}
         <Card style={styles.assignmentsCard}>

@@ -1916,3 +1916,210 @@ export async function getParentConversations(teacherId: string) {
     return { data: [], error: null }; // Return empty array on error
   }
 }
+
+// ============================================================================
+// STUDENT TEST RESULTS & DETAILED ACADEMIC ANALYTICS
+// ============================================================================
+
+export async function getStudentTestResults(studentId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('student_test_results')
+      .select(`
+        *,
+        teacher:app_users!student_test_results_teacher_id_fkey(id, name, email),
+        school:schools(id, name)
+      `)
+      .eq('student_id', studentId)
+      .order('test_date', { ascending: true });
+
+    if (error) {
+      // Graceful fallback if table does not exist or relation fails
+      const { data: rawData, error: rawError } = await supabase
+        .from('student_test_results')
+        .select('*')
+        .eq('student_id', studentId)
+        .order('test_date', { ascending: true });
+
+      if (rawError) {
+        console.warn('student_test_results query note:', rawError.message);
+        return { data: [], error: null };
+      }
+      return { data: rawData || [], error: null };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    console.error('getStudentTestResults error:', error);
+    return { data: [], error: null };
+  }
+}
+
+export async function addStudentTestResult(resultData: {
+  student_id: string;
+  teacher_id?: string;
+  school_id?: string;
+  title: string;
+  test_date: string;
+  score: number;
+  max_score: number;
+  percentage?: number;
+  notes?: string;
+  pdf_url?: string;
+  pdf_path?: string;
+}) {
+  try {
+    const calculatedPercentage = resultData.max_score > 0
+      ? Math.round(((resultData.score / resultData.max_score) * 100) * 100) / 100
+      : 0;
+
+    const payload = {
+      ...resultData,
+      percentage: calculatedPercentage,
+    };
+
+    const { data, error } = await supabase
+      .from('student_test_results')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error) {
+    return handleDBError('addStudentTestResult', error);
+  }
+}
+
+export async function updateStudentTestResult(
+  id: string,
+  updates: Partial<{
+    title: string;
+    test_date: string;
+    score: number;
+    max_score: number;
+    notes?: string;
+    pdf_url?: string;
+    pdf_path?: string;
+  }>
+) {
+  try {
+    const payload: any = { ...updates, updated_at: new Date().toISOString() };
+    if (updates.score !== undefined && updates.max_score !== undefined && updates.max_score > 0) {
+      payload.percentage = Math.round(((updates.score / updates.max_score) * 100) * 100) / 100;
+    }
+
+    const { data, error } = await supabase
+      .from('student_test_results')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error) {
+    return handleDBError('updateStudentTestResult', error);
+  }
+}
+
+export async function deleteStudentTestResult(id: string) {
+  try {
+    const { error } = await supabase
+      .from('student_test_results')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    return { error: null };
+  } catch (error) {
+    return handleDBError('deleteStudentTestResult', error);
+  }
+}
+
+export async function getStudentAttendanceSummary(studentId: string) {
+  try {
+    let present = 0;
+    let absent = 0;
+    let late = 0;
+    let excused = 0;
+    const history: Array<{ date: string; status: string; note?: string }> = [];
+
+    // 1. Query attendance_records joined with attendance_sheets
+    const { data: records, error: recError } = await supabase
+      .from('attendance_records')
+      .select(`
+        id,
+        status,
+        note,
+        created_at,
+        sheet:attendance_sheets(date)
+      `)
+      .eq('student_id', studentId);
+
+    if (!recError && records && records.length > 0) {
+      records.forEach((r: any) => {
+        const s = (r.status || '').toLowerCase().trim();
+        if (s === 'present') present++;
+        else if (s === 'absent') absent++;
+        else if (s === 'late' || s === 'punished') late++;
+        else if (s === 'excused' || s === 'kicked') excused++;
+        else present++;
+
+        history.push({
+          date: r.sheet?.date || (r.created_at ? r.created_at.split('T')[0] : 'Unknown'),
+          status: s || 'present',
+          note: r.note || '',
+        });
+      });
+    }
+
+    // 2. Also check standalone attendance table if present
+    const { data: standaloneData } = await supabase
+      .from('attendance')
+      .select('date, status, notes')
+      .eq('student_id', studentId);
+
+    if (standaloneData && standaloneData.length > 0) {
+      standaloneData.forEach((r: any) => {
+        const s = (r.status || '').toLowerCase().trim();
+        if (s === 'present') present++;
+        else if (s === 'absent') absent++;
+        else if (s === 'late' || s === 'punished') late++;
+        else if (s === 'excused' || s === 'kicked') excused++;
+        else present++;
+
+        history.push({
+          date: r.date || 'Unknown',
+          status: s || 'present',
+          note: r.notes || '',
+        });
+      });
+    }
+
+    const total = present + absent + late + excused;
+    const attendanceRate = total > 0 ? Math.round(((present + late) / total) * 100) : 100;
+
+    return {
+      present,
+      absent,
+      late,
+      excused,
+      total,
+      attendanceRate,
+      history: history.sort((a, b) => b.date.localeCompare(a.date)),
+    };
+  } catch (error) {
+    console.error('getStudentAttendanceSummary error:', error);
+    return {
+      present: 0,
+      absent: 0,
+      late: 0,
+      excused: 0,
+      total: 0,
+      attendanceRate: 100,
+      history: [],
+    };
+  }
+}
+

@@ -3,18 +3,21 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { getCurrentUser } from '../lib/auth';
 import { getUserById, getStudentSubmissions, getAssignmentsBySchool } from '../lib/database';
 import { formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import { exportToCSV } from '../lib/csvExport';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import StudentPerformanceAnalytics from '../components/StudentPerformanceAnalytics';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
 export default function StudentProgress() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [student, setStudent] = useState<any>(null);
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -31,6 +34,9 @@ export default function StudentProgress() {
     try {
       const studentId = params.studentId as string;
       
+      const authUser = await getCurrentUser();
+      if (authUser) setCurrentUser(authUser);
+
       const { data: studentData } = await getUserById(studentId);
       if (studentData) {
         setStudent(studentData);
@@ -156,54 +162,14 @@ export default function StudentProgress() {
           </View>
         </Card>
 
-        {/* Progress Overview */}
-        <Card style={styles.progressCard}>
-          <Text style={styles.sectionTitle}>Progress Overview</Text>
-          
-          {/* Completion Rate */}
-          <View style={styles.progressBar}>
-            <View style={styles.progressBarBackground}>
-              <View 
-                style={[
-                  styles.progressBarFill, 
-                  { 
-                    width: `${stats.completionRate}%`,
-                    backgroundColor: getGradeColor(stats.completionRate)
-                  }
-                ]} 
-              />
-            </View>
-            <Text style={styles.progressText}>
-              {stats.completionRate.toFixed(1)}% Complete
-            </Text>
-          </View>
-
-          {/* Stats Grid */}
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
-              <Text style={styles.statValue}>{stats.submittedCount}</Text>
-              <Text style={styles.statLabel}>Submitted</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="close-circle" size={24} color={Colors.error} />
-              <Text style={styles.statValue}>{stats.missingCount}</Text>
-              <Text style={styles.statLabel}>Missing</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="star" size={24} color={Colors.warning} />
-              <Text style={[styles.statValue, { color: getGradeColor(stats.averageGrade) }]}>
-                {stats.averageGrade.toFixed(1)}
-              </Text>
-              <Text style={styles.statLabel}>Avg Grade</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Ionicons name="trophy" size={24} color={Colors.info} />
-              <Text style={styles.statValue}>{stats.gradedCount}</Text>
-              <Text style={styles.statLabel}>Graded</Text>
-            </View>
-          </View>
-        </Card>
+        {/* Student Academic Analytics & Test Results */}
+        <StudentPerformanceAnalytics
+          student={student}
+          isTeacherOrAdmin={currentUser?.role === 'teacher' || currentUser?.role === 'admin'}
+          totalAssignments={stats.totalAssignments}
+          submittedAssignments={stats.submittedCount}
+          onRefreshParent={loadData}
+        />
 
         {/* Recent Activity */}
         <Card style={styles.activityCard}>
