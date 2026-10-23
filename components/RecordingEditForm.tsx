@@ -167,13 +167,8 @@ export default function RecordingEditForm({
           {/* Google Drive Status Badge */}
           {driveId ? (
             <View style={styles.driveBadge}>
-              <Ionicons name="shield-checkmark" size={18} color={Colors.success} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.driveBadgeTitle}>Google Drive Cloud Stream Linked</Text>
-                <Text style={styles.driveBadgeSubtitle} numberOfLines={1}>
-                  ID: {driveId} • Protected Relay Streaming Active
-                </Text>
-              </View>
+              <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+              <Text style={styles.driveBadgeTitle}>Google Drive link connected</Text>
             </View>
           ) : videoId ? (
             <View style={styles.videoPreview}>

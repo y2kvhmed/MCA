@@ -400,8 +400,9 @@ export default function AddRecording() {
         />
 
         {/* Video Source Type Selector */}
+        {/* Video Source Selector */}
         <View style={styles.sourceSelectorContainer}>
-          <Text style={styles.sectionLabel}>Video Delivery Method</Text>
+          <Text style={styles.sectionLabel}>Video Source</Text>
           <View style={styles.tabSwitcher}>
             <TouchableOpacity
               style={[styles.tabButton, sourceType === 'drive' && styles.tabButtonActive]}
@@ -413,7 +414,7 @@ export default function AddRecording() {
                 color={sourceType === 'drive' ? '#FFFFFF' : Colors.text.secondary} 
               />
               <Text style={[styles.tabButtonText, sourceType === 'drive' && styles.tabButtonTextActive]}>
-                Google Drive Stream
+                Google Drive Link
               </Text>
             </TouchableOpacity>
 
@@ -427,69 +428,30 @@ export default function AddRecording() {
                 color={sourceType === 'upload' ? '#FFFFFF' : Colors.text.secondary} 
               />
               <Text style={[styles.tabButtonText, sourceType === 'upload' && styles.tabButtonTextActive]}>
-                Upload File
+                Upload Video
               </Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Google Drive Stream Section */}
+        {/* Google Drive Link Section */}
         {sourceType === 'drive' ? (
           <View style={styles.driveSectionBox}>
-            <View style={styles.driveHeaderRow}>
-              <Ionicons name="shield-checkmark" size={22} color={Colors.primary} />
-              <Text style={styles.driveHeaderTitle}>Bulletproof Cloud Relay Stream</Text>
-            </View>
-            <Text style={styles.driveHeaderSubtitle}>
-              Paste any Google Drive recording link. The file stays on Drive without using Supabase storage. Students stream through the secured in-app player with dynamic watermarks and never see the Drive link.
-            </Text>
-
             <Input
-              label="Google Drive Link or File ID *"
+              label="Google Drive Link *"
               value={driveLink}
               onChangeText={setDriveLink}
-              placeholder="e.g., https://drive.google.com/file/d/.../view?usp=sharing"
+              placeholder="Paste Google Drive link"
               autoCapitalize="none"
             />
 
             {/* Live Detection Badge */}
             {extractGoogleDriveId(driveLink) ? (
               <View style={styles.detectedCard}>
-                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.detectedTitle}>Google Drive File ID Verified</Text>
-                  <Text style={styles.detectedSubtitle} numberOfLines={1}>
-                    ID: {extractGoogleDriveId(driveLink)} • Protected Relay Streaming Active
-                  </Text>
-                </View>
-              </View>
-            ) : driveLink.trim().length > 0 ? (
-              <View style={styles.warningCard}>
-                <Ionicons name="alert-circle" size={20} color={Colors.warning} />
-                <Text style={styles.warningCardText}>
-                  Checking link format... Make sure to paste a valid Google Drive share link.
-                </Text>
+                <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                <Text style={styles.detectedTitle}>Google Drive link connected</Text>
               </View>
             ) : null}
-
-            {/* Estimated Duration */}
-            <Input
-              label="Duration in Minutes"
-              value={durationMinutes ? durationMinutes.toString() : ''}
-              onChangeText={(text) => {
-                const val = parseInt(text.replace(/[^0-9]/g, ''), 10);
-                setDurationMinutes(isNaN(val) ? null : val);
-              }}
-              placeholder="e.g., 45"
-              keyboardType="number-pad"
-            />
-
-            <View style={styles.driveTipBox}>
-              <Ionicons name="information-circle-outline" size={18} color="#94A3B8" />
-              <Text style={styles.driveTipText}>
-                Remember to set the file sharing in Google Drive to "Anyone with the link can view". Students cannot see, copy, or download the original Drive URL.
-              </Text>
-            </View>
           </View>
         ) : (
           /* Video Upload Section */
