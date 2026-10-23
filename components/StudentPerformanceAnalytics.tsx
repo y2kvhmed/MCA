@@ -694,25 +694,6 @@ export default function StudentPerformanceAnalytics({
         if (w > 0 && w !== chartWidth) setChartWidth(w);
       }}
     >
-      {/* ----------------------------------------------------------------------
-          PRINTABLE REPORT VIEW (Web print-optimized format for PDF saving)
-      ----------------------------------------------------------------------- */}
-      {Platform.OS === 'web' && (
-        <style>
-          {`
-            @media print {
-              body { background: #FFFFFF !important; color: #000000 !important; }
-              header, nav, footer, .no-print, button { display: none !important; }
-              .printable-report-container { display: block !important; margin: 20px 0; }
-              .print-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 11px; }
-              .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-              .print-table th { background: #f2f2f2; font-weight: bold; }
-              .print-stat-row { display: flex; justify-content: space-between; margin: 12px 0; border: 1px solid #ddd; padding: 10px; border-radius: 6px; }
-              .print-stat-col { flex: 1; text-align: center; }
-            }
-          `}
-        </style>
-      )}
 
       {/* TOP HEADER & ACTION BUTTONS */}
       <View style={styles.sectionHeaderRow}>

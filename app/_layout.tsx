@@ -57,15 +57,20 @@ class ErrorBoundary extends React.Component<
         );
       }
       
-      // For production, show simple error message
+      // For production, show error message
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: '#f8f9fa' }}>
-          <Text style={{ fontSize: 18, textAlign: 'center', marginBottom: 20, color: '#333' }}>
+          <Text style={{ fontSize: 18, textAlign: 'center', marginBottom: 10, color: '#333', fontWeight: 'bold' }}>
             Physics Learning App
           </Text>
-          <Text style={{ fontSize: 14, textAlign: 'center', color: '#666', marginBottom: 20 }}>
+          <Text style={{ fontSize: 14, textAlign: 'center', color: '#666', marginBottom: 12 }}>
             Something went wrong. Please restart the app.
           </Text>
+          {this.state.error?.message && (
+            <Text style={{ fontSize: 12, color: '#FF3B30', marginBottom: 16, textAlign: 'center', maxWidth: 450, padding: 8, backgroundColor: '#FFF0F0', borderRadius: 6, borderWidth: 1, borderColor: '#FFD2D2' }}>
+              {this.state.error.message}
+            </Text>
+          )}
           <TouchableOpacity 
             style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 }}
             onPress={this.handleRetry}
