@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getAssignmentsByTeacher, deleteAssignment } from '../lib/database';
+import { getAssignmentsByTeacherSchools, deleteAssignment } from '../lib/database';
 import { formatDueDate, formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import AnimatedCard from '../components/AnimatedCard';
 import FadeInView from '../components/FadeInView';
@@ -38,13 +38,13 @@ export default function TeacherAssignments() {
         return;
       }
 
-      const { data: assignmentsData, error } = await getAssignmentsByTeacher(currentUser.id);
+      const { data: assignmentsData, error } = await getAssignmentsByTeacherSchools(currentUser.id);
       if (error) {
         console.error('Get assignments error:', error);
         // Don't throw, just set empty array
         setAssignments([]);
       } else {
-        console.log(`Loaded ${assignmentsData?.length || 0} assignments`);
+        console.log(`Loaded ${assignmentsData?.length || 0} school assignments`);
         setAssignments(assignmentsData || []);
       }
     } catch (error) {
@@ -90,6 +90,8 @@ export default function TeacherAssignments() {
     );
   };
 
+  const isOwnAssignment = (assignment: any) => !!user && assignment.teacher_id === user.id;
+
   const getStatusColor = (assignment: any) => {
     const now = new Date();
     const dueDate = assignment.due_date ? new Date(assignment.due_date) : null;
@@ -110,7 +112,7 @@ export default function TeacherAssignments() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Assignments</Text>
+        <Text style={styles.headerTitle}>School Assignments</Text>
         <TouchableOpacity onPress={() => router.push('/create-assignment')}>
           <Ionicons name="add" size={24} color={Colors.primary} />
         </TouchableOpacity>
@@ -144,8 +146,8 @@ export default function TeacherAssignments() {
         {assignments.length === 0 ? (
           <EmptyState
             icon="document-text"
-            message="No assignments created yet"
-            description="Create your first assignment to get started with managing student work."
+            message="No assignments yet"
+            description="Assignments created by any teacher at your school will show up here."
           />
         ) : (
           assignments.map((assignment, index) => (
@@ -180,6 +182,13 @@ export default function TeacherAssignments() {
                       {assignment.submissions?.length || 0} submissions
                     </Text>
                   </View>
+
+                  <View style={styles.metaItem}>
+                    <Ionicons name="person" size={14} color={Colors.text.secondary} />
+                    <Text style={styles.metaText}>
+                      {isOwnAssignment(assignment) ? 'You' : (assignment.teacher?.name || 'Another teacher')}
+                    </Text>
+                  </View>
                 </View>
 
                 <View style={styles.assignmentActions}>
@@ -205,16 +214,18 @@ export default function TeacherAssignments() {
                     <Text style={styles.actionText}>Edit</Text>
                   </TouchableOpacity>
                   
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleDeleteAssignment(assignment);
-                    }}
-                  >
-                    <Ionicons name="trash" size={16} color={Colors.error} />
-                    <Text style={[styles.actionText, { color: Colors.error }]}>Delete</Text>
-                  </TouchableOpacity>
+                  {isOwnAssignment(assignment) && (
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDeleteAssignment(assignment);
+                      }}
+                    >
+                      <Ionicons name="trash" size={16} color={Colors.error} />
+                      <Text style={[styles.actionText, { color: Colors.error }]}>Delete</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </TouchableOpacity>
             </AnimatedCard>

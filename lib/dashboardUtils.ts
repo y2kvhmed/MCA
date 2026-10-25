@@ -1,5 +1,5 @@
 import { getCurrentUser } from './auth';
-import { getSchoolStats, getStudentStats, getAdminStats, getAssignmentsByTeacher, getAssignmentsForStudent } from './database';
+import { getSchoolStats, getStudentStats, getAdminStats, getAssignmentsByTeacherSchools, getAssignmentsForStudent } from './database';
 
 export interface DashboardData {
   user: any;
@@ -39,7 +39,7 @@ export async function loadTeacherDashboard(): Promise<DashboardData> {
     // Load assignments with fallback
     let assignments: any[] = [];
     try {
-      const { data: assignmentsData } = await getAssignmentsByTeacher(user.id);
+      const { data: assignmentsData } = await getAssignmentsByTeacherSchools(user.id);
       assignments = assignmentsData?.slice(0, 3) || [];
     } catch (error) {
       console.error('Failed to load assignments:', error);

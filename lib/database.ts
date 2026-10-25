@@ -504,6 +504,35 @@ export async function getAssignmentsByTeacher(teacherId: string) {
   return { data, error };
 }
 
+/**
+ * Every assignment belonging to the schools the teacher teaches in, so co-teachers at the same
+ * school share one list instead of only seeing what they created themselves. Falls back to the
+ * teacher's own assignments when they are not attached to any school yet.
+ */
+export async function getAssignmentsByTeacherSchools(teacherId: string) {
+  const schoolIds = await getTeacherSchoolIds(teacherId);
+
+  let query = supabase
+    .from('assignments')
+    .select(`
+      *,
+      teacher:app_users!assignments_teacher_id_fkey(id, name),
+      school:schools(id, name),
+      submissions(id)
+    `)
+    .order('created_at', { ascending: false });
+
+  if (schoolIds.length > 0) {
+    query = query.in('school_id', schoolIds);
+  } else {
+    query = query.eq('teacher_id', teacherId);
+  }
+
+  const { data, error } = await query;
+
+  return { data, error };
+}
+
 export async function getAssignmentById(assignmentId: string) {
   const { data, error } = await supabase
     .from('assignments')

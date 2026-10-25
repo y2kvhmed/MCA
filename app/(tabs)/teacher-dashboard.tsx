@@ -4,7 +4,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../../lib/auth';
-import { getSchoolStats, getAssignmentsByTeacher } from '../../lib/database';
 import { formatRelativeDate, handleError } from '../../lib/utils';
 import { loadTeacherDashboard } from '../../lib/dashboardUtils';
 import { useNotifications } from '../../contexts/NotificationContext';
@@ -91,7 +90,7 @@ export default function TeacherDashboard() {
               <View style={styles.statContent}>
                 <Ionicons name="document-text" size={24} color={Colors.primary} />
                 <Text style={styles.statValue}>{stats.myAssignments || 0}</Text>
-                <Text style={styles.statLabel}>My Assignments</Text>
+                <Text style={styles.statLabel}>Assignments</Text>
               </View>
             </Card>
           </TouchableOpacity>
@@ -179,10 +178,10 @@ export default function TeacherDashboard() {
           </View>
         </Card>
 
-        {/* My Assignments */}
+        {/* School Assignments */}
         <Card style={styles.classesCard}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>My Assignments</Text>
+            <Text style={styles.sectionTitle}>School Assignments</Text>
             <TouchableOpacity onPress={() => router.push('/teacher-assignments')}>
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
