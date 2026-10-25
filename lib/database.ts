@@ -506,13 +506,19 @@ export async function getAssignmentsByTeacher(teacherId: string) {
 
 /**
  * Every assignment belonging to the schools the teacher teaches in, so co-teachers at the same
- * school share one list instead of only seeing what they created themselves. Falls back to the
- * teacher's own assignments when they are not attached to any school yet.
+ * school share one list instead of only seeing what they created themselves. The teacher's own
+ * assignments are always included too, so anything created before a school was attached (or with
+ * a null school_id) can never disappear from the list.
  */
 export async function getAssignmentsByTeacherSchools(teacherId: string) {
   const schoolIds = await getTeacherSchoolIds(teacherId);
 
-  let query = supabase
+  const filters = [`teacher_id.eq.${teacherId}`];
+  if (schoolIds.length > 0) {
+    filters.push(`school_id.in.(${schoolIds.join(',')})`);
+  }
+
+  const { data, error } = await supabase
     .from('assignments')
     .select(`
       *,
@@ -520,15 +526,8 @@ export async function getAssignmentsByTeacherSchools(teacherId: string) {
       school:schools(id, name),
       submissions(id)
     `)
+    .or(filters.join(','))
     .order('created_at', { ascending: false });
-
-  if (schoolIds.length > 0) {
-    query = query.in('school_id', schoolIds);
-  } else {
-    query = query.eq('teacher_id', teacherId);
-  }
-
-  const { data, error } = await query;
 
   return { data, error };
 }
