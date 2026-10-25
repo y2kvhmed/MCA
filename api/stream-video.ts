@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { createClient } from '@supabase/supabase-js';
 
 // Extend Node HTTP types to match Vercel Serverless Function signatures
@@ -25,13 +27,17 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
-// In-memory stream URL cache to allow instant seeking without re-resolving Google tokens
-interface CacheEntry {
-  url: string;
-  expiresAt: number;
-}
-const streamUrlCache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+// Google Drive only hands out real media bytes for a *bounded* byte range. Verified against a
+// 1.8 GB lesson file:
+//   Range: bytes=0-8388607  + confirm=t  ->  206 video/mp4 (Accept-Ranges, Content-Range, CORS)
+//   Range: bytes=0-         + confirm=t  ->  200 text/html (the "virus scan warning" page)
+// Browsers always ask for the open-ended form, so the player can never be pointed straight at
+// Drive (a 302 redirect made it render that HTML warning page, i.e. "playback failed"), and the
+// relay must clamp whatever range it forwards. Clamping also keeps every invocation small, which
+// is what stops the 300s function timeout this relay used to hit on multi-gigabyte files.
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB per request
 
 /**
  * Extracts Google Drive ID from URLs or raw IDs
@@ -59,101 +65,135 @@ function extractGoogleDriveId(urlOrId: string): string | null {
 }
 
 /**
- * Resolves a direct Google Drive CDN stream URL.
- * Handles large files (> 100MB) by resolving virus scan confirmation tokens.
+ * Turns whatever Range the player sent into a Range we can safely ask Google for.
+ * Every non-suffix range is capped at CHUNK_SIZE so one invocation can never pull a whole
+ * multi-gigabyte file. Suffix ranges (bytes=-500) are already bounded and pass through.
  */
-async function resolveDriveStreamUrl(fileId: string): Promise<string> {
-  const cached = streamUrlCache.get(fileId);
-  if (cached && Date.now() < cached.expiresAt) {
-    return cached.url;
-  }
+function buildUpstreamRange(rangeHeader?: string): string {
+  if (rangeHeader) {
+    if (/^bytes=-\d+$/.test(rangeHeader)) {
+      return rangeHeader;
+    }
 
-  const fetchHeaders: Record<string, string> = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': '*/*',
-  };
-
-  const initialUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
-  let res1 = await fetch(initialUrl, {
-    method: 'GET',
-    headers: fetchHeaders,
-    redirect: 'manual',
-  });
-
-  // Direct redirect (common for small-to-medium files)
-  if (res1.status >= 301 && res1.status <= 308) {
-    const loc = res1.headers.get('location');
-    if (loc) {
-      const target = loc.startsWith('http') ? loc : new URL(loc, initialUrl).toString();
-      streamUrlCache.set(fileId, { url: target, expiresAt: Date.now() + CACHE_TTL_MS });
-      return target;
+    const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/);
+    if (match) {
+      const start = parseInt(match[1], 10);
+      const requestedEnd = match[2] ? parseInt(match[2], 10) : Number.MAX_SAFE_INTEGER;
+      const end = Math.min(requestedEnd, start + CHUNK_SIZE - 1);
+      return `bytes=${start}-${end}`;
     }
   }
 
-  // Fallback to drive.google.com/uc if usercontent returns 404
-  if (res1.status === 404) {
-    const ucUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-    const ucRes = await fetch(ucUrl, {
-      method: 'GET',
-      headers: fetchHeaders,
-      redirect: 'manual',
+  return `bytes=0-${CHUNK_SIZE - 1}`;
+}
+
+/**
+ * Re-emits at most `maxBytes` from an upstream body. Google normally honours the clamped range,
+ * but this guarantees a single invocation can never stream more than one chunk if it does not.
+ */
+async function* limitedStream(body: any, maxBytes: number): AsyncGenerator<Uint8Array> {
+  const reader = body.getReader();
+  let sent = 0;
+  try {
+    while (sent < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+
+      const room = maxBytes - sent;
+      if (value.byteLength > room) {
+        yield value.subarray(0, room);
+        sent = maxBytes;
+        break;
+      }
+
+      sent += value.byteLength;
+      yield value;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+/**
+ * Streams one bounded chunk of a Google Drive file straight to the client.
+ * The player never sees a Google URL, and seeking works because the browser keeps issuing new
+ * Range requests that this handler re-anchors to chunk boundaries.
+ */
+async function proxyDriveStream(
+  req: VercelApiRequest,
+  res: VercelApiResponse,
+  fileId: string
+): Promise<void> {
+  const upstreamRange = buildUpstreamRange(req.headers.range as string | undefined);
+
+  // Stop pulling from Google the moment the player closes or abandons this chunk (e.g. seeking).
+  const controller = new AbortController();
+  const abortUpstream = () => controller.abort();
+  res.on('close', abortUpstream);
+
+  try {
+    // `confirm=t` is what makes Drive answer with real bytes instead of the warning page.
+    const upstream = await fetch(
+      `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`,
+      {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': BROWSER_UA,
+          'Accept': '*/*',
+          'Range': upstreamRange,
+        },
+      }
+    );
+
+    const contentType = upstream.headers.get('content-type') || '';
+    const contentRange = upstream.headers.get('content-range') || '';
+    const parsed = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(contentRange);
+
+    // Only a bounded 206 carries playable bytes. Anything else (the HTML interstitial, a full-file
+    // 200, an error, a quota refusal) must never be piped to the player.
+    if (upstream.status !== 206 || !parsed || !upstream.body || contentType.includes('text/html')) {
+      await upstream.body?.cancel().catch(() => {});
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'Video stream resolution failed',
+        message: 'Google Drive did not return video data for this file. Make sure the file is shared as "Anyone with the link" and that its download quota has not been exceeded.',
+      }));
+      return;
+    }
+
+    const start = parseInt(parsed[1], 10);
+    const end = Math.min(parseInt(parsed[2], 10), start + CHUNK_SIZE - 1);
+    const total = parsed[3] === '*' ? null : parseInt(parsed[3], 10);
+    const length = end - start + 1;
+
+    res.writeHead(206, {
+      'Content-Type': contentType || 'video/mp4',
+      'Content-Length': String(length),
+      'Content-Range': total === null ? `bytes ${start}-${end}/*` : `bytes ${start}-${end}/${total}`,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, max-age=0, no-store',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
     });
-    if (ucRes.status >= 301 && ucRes.status <= 308) {
-      const loc = ucRes.headers.get('location');
-      if (loc) {
-        const target = loc.startsWith('http') ? loc : new URL(loc, ucUrl).toString();
-        streamUrlCache.set(fileId, { url: target, expiresAt: Date.now() + CACHE_TTL_MS });
-        return target;
+
+    if (req.method === 'HEAD') {
+      await upstream.body.cancel().catch(() => {});
+      res.end();
+      return;
+    }
+
+    try {
+      await pipeline(Readable.from(limitedStream(upstream.body, length)), res);
+    } catch (streamErr: any) {
+      // The player paused, closed or seeked away — the upstream socket is torn down by pipeline.
+      if (streamErr?.code !== 'ERR_STREAM_PREMATURE_CLOSE' && streamErr?.name !== 'AbortError') {
+        console.error('Drive stream pipe error:', streamErr);
       }
     }
+  } finally {
+    res.off('close', abortUpstream);
   }
-
-  const contentType = res1.headers.get('content-type') || '';
-
-  // Direct media stream returned
-  if (contentType.includes('video/') || contentType.includes('application/octet-stream')) {
-    streamUrlCache.set(fileId, { url: initialUrl, expiresAt: Date.now() + CACHE_TTL_MS });
-    return initialUrl;
-  }
-
-  // HTML response indicates virus scan warning for large files (> 100MB)
-  if (contentType.includes('text/html')) {
-    const html = await res1.text();
-
-    const formMatch = html.match(/<form[^>]+action="([^"]+)"[^>]*>([\s\S]*?)<\/form>/i);
-    const actionUrl = formMatch ? formMatch[1].replace(/&amp;/g, '&') : 'https://drive.usercontent.google.com/download';
-
-    const uuidMatch = 
-      html.match(/name="uuid"\s+value="([^"]+)"/i) || 
-      html.match(/value="([^"]+)"\s+name="uuid"/i) ||
-      html.match(/uuid=([a-f0-9\-]+)/i);
-
-    if (uuidMatch) {
-      const uuid = uuidMatch[1];
-      const confirmedUrl = new URL(actionUrl);
-      confirmedUrl.searchParams.set('id', fileId);
-      confirmedUrl.searchParams.set('export', 'download');
-      confirmedUrl.searchParams.set('confirm', 't');
-      confirmedUrl.searchParams.set('uuid', uuid);
-      const finalUrl = confirmedUrl.toString();
-      streamUrlCache.set(fileId, { url: finalUrl, expiresAt: Date.now() + CACHE_TTL_MS });
-      return finalUrl;
-    }
-
-    const linkMatch = html.match(/href="([^"]*confirm=([^&"]+)[^"]*)"/i);
-    if (linkMatch) {
-      const finalUrl = linkMatch[1].replace(/&amp;/g, '&');
-      streamUrlCache.set(fileId, { url: finalUrl, expiresAt: Date.now() + CACHE_TTL_MS });
-      return finalUrl;
-    }
-
-    if (html.includes('Quota exceeded') || html.includes('Too many users')) {
-      throw new Error('Google Drive quota limit reached for this file. Please try again shortly or re-upload the lesson.');
-    }
-  }
-
-  streamUrlCache.set(fileId, { url: initialUrl, expiresAt: Date.now() + CACHE_TTL_MS });
-  return initialUrl;
 }
 
 export default async function handler(req: VercelApiRequest, res: VercelApiResponse) {
@@ -176,10 +216,10 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
     if (referer) {
       try {
         const refUrl = new URL(referer);
-        const isAllowed = 
-          refUrl.hostname.includes('vercel.app') || 
-          refUrl.hostname.includes('localhost') || 
-          refUrl.hostname.includes('127.0.0.1') || 
+        const isAllowed =
+          refUrl.hostname.includes('vercel.app') ||
+          refUrl.hostname.includes('localhost') ||
+          refUrl.hostname.includes('127.0.0.1') ||
           refUrl.hostname === host;
 
         if (!isAllowed) {
@@ -242,31 +282,21 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
       return;
     }
 
-    // 4. Handle Google Drive Streaming Relay
+    // 4. Google Drive streaming relay (proxied, bounded range-aware)
     if (targetDriveId) {
       try {
-        const streamUrl = await resolveDriveStreamUrl(targetDriveId);
-
-        // Redirect directly to the authenticated Google CDN stream
-        // Eliminates 300s serverless function timeout and locked stream errors
-        res.writeHead(302, {
-          'Location': streamUrl,
-          'Cache-Control': 'private, no-cache, no-store, must-revalidate',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
-        });
-        res.end();
-        return;
+        await proxyDriveStream(req, res, targetDriveId);
       } catch (driveErr: any) {
-        console.error('Google Drive stream resolution error:', driveErr);
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          error: 'Video stream resolution failed',
-          message: driveErr?.message || 'Could not stream file from Google Drive',
-        }));
-        return;
+        console.error('Google Drive stream error:', driveErr);
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'Video stream resolution failed',
+            message: driveErr?.message || 'Could not stream file from Google Drive',
+          }));
+        }
       }
+      return;
     }
 
     // 5. Fallback for Supabase storage or external URLs
