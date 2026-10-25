@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { Readable } from 'stream';
 import { createClient } from '@supabase/supabase-js';
 
 // Extend Node HTTP types to match Vercel Serverless Function signatures
@@ -25,6 +24,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     autoRefreshToken: false,
   },
 });
+
+// In-memory stream URL cache to allow instant seeking without re-resolving Google tokens
+interface CacheEntry {
+  url: string;
+  expiresAt: number;
+}
+const streamUrlCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Extracts Google Drive ID from URLs or raw IDs
@@ -52,35 +59,101 @@ function extractGoogleDriveId(urlOrId: string): string | null {
 }
 
 /**
- * Parses Google Drive virus scan warning form for large files (> 100MB)
+ * Resolves a direct Google Drive CDN stream URL.
+ * Handles large files (> 100MB) by resolving virus scan confirmation tokens.
  */
-function extractConfirmForm(html: string): { actionUrl: string; params: Record<string, string> } | null {
-  const formMatch = html.match(/<form[^>]+action="([^"]+)"[^>]*>([\s\S]*?)<\/form>/i);
-  if (!formMatch) {
+async function resolveDriveStreamUrl(fileId: string): Promise<string> {
+  const cached = streamUrlCache.get(fileId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.url;
+  }
+
+  const fetchHeaders: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+  };
+
+  const initialUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
+  let res1 = await fetch(initialUrl, {
+    method: 'GET',
+    headers: fetchHeaders,
+    redirect: 'manual',
+  });
+
+  // Direct redirect (common for small-to-medium files)
+  if (res1.status >= 301 && res1.status <= 308) {
+    const loc = res1.headers.get('location');
+    if (loc) {
+      const target = loc.startsWith('http') ? loc : new URL(loc, initialUrl).toString();
+      streamUrlCache.set(fileId, { url: target, expiresAt: Date.now() + CACHE_TTL_MS });
+      return target;
+    }
+  }
+
+  // Fallback to drive.google.com/uc if usercontent returns 404
+  if (res1.status === 404) {
+    const ucUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    const ucRes = await fetch(ucUrl, {
+      method: 'GET',
+      headers: fetchHeaders,
+      redirect: 'manual',
+    });
+    if (ucRes.status >= 301 && ucRes.status <= 308) {
+      const loc = ucRes.headers.get('location');
+      if (loc) {
+        const target = loc.startsWith('http') ? loc : new URL(loc, ucUrl).toString();
+        streamUrlCache.set(fileId, { url: target, expiresAt: Date.now() + CACHE_TTL_MS });
+        return target;
+      }
+    }
+  }
+
+  const contentType = res1.headers.get('content-type') || '';
+
+  // Direct media stream returned
+  if (contentType.includes('video/') || contentType.includes('application/octet-stream')) {
+    streamUrlCache.set(fileId, { url: initialUrl, expiresAt: Date.now() + CACHE_TTL_MS });
+    return initialUrl;
+  }
+
+  // HTML response indicates virus scan warning for large files (> 100MB)
+  if (contentType.includes('text/html')) {
+    const html = await res1.text();
+
+    const formMatch = html.match(/<form[^>]+action="([^"]+)"[^>]*>([\s\S]*?)<\/form>/i);
+    const actionUrl = formMatch ? formMatch[1].replace(/&amp;/g, '&') : 'https://drive.usercontent.google.com/download';
+
+    const uuidMatch = 
+      html.match(/name="uuid"\s+value="([^"]+)"/i) || 
+      html.match(/value="([^"]+)"\s+name="uuid"/i) ||
+      html.match(/uuid=([a-f0-9\-]+)/i);
+
+    if (uuidMatch) {
+      const uuid = uuidMatch[1];
+      const confirmedUrl = new URL(actionUrl);
+      confirmedUrl.searchParams.set('id', fileId);
+      confirmedUrl.searchParams.set('export', 'download');
+      confirmedUrl.searchParams.set('confirm', 't');
+      confirmedUrl.searchParams.set('uuid', uuid);
+      const finalUrl = confirmedUrl.toString();
+      streamUrlCache.set(fileId, { url: finalUrl, expiresAt: Date.now() + CACHE_TTL_MS });
+      return finalUrl;
+    }
+
     const linkMatch = html.match(/href="([^"]*confirm=([^&"]+)[^"]*)"/i);
     if (linkMatch) {
-      return { actionUrl: linkMatch[1].replace(/&amp;/g, '&'), params: {} };
+      const finalUrl = linkMatch[1].replace(/&amp;/g, '&');
+      streamUrlCache.set(fileId, { url: finalUrl, expiresAt: Date.now() + CACHE_TTL_MS });
+      return finalUrl;
     }
-    return null;
+
+    if (html.includes('Quota exceeded') || html.includes('Too many users')) {
+      throw new Error('Google Drive quota limit reached for this file. Please try again shortly or re-upload the lesson.');
+    }
   }
 
-  const actionUrl = formMatch[1].replace(/&amp;/g, '&');
-  const formContent = formMatch[2];
-  const params: Record<string, string> = {};
-
-  const inputRegex1 = /<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"/gi;
-  let m1;
-  while ((m1 = inputRegex1.exec(formContent)) !== null) {
-    params[m1[1]] = m1[2];
-  }
-
-  const inputRegex2 = /<input[^>]+value="([^"]*)"[^>]+name="([^"]+)"/gi;
-  let m2;
-  while ((m2 = inputRegex2.exec(formContent)) !== null) {
-    params[m2[2]] = m2[1];
-  }
-
-  return { actionUrl, params };
+  streamUrlCache.set(fileId, { url: initialUrl, expiresAt: Date.now() + CACHE_TTL_MS });
+  return initialUrl;
 }
 
 export default async function handler(req: VercelApiRequest, res: VercelApiResponse) {
@@ -171,170 +244,37 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
 
     // 4. Handle Google Drive Streaming Relay
     if (targetDriveId) {
-      const rangeHeader = req.headers.range;
-      let targetUrl = `https://drive.usercontent.google.com/download?id=${targetDriveId}&export=download&confirm=t`;
+      try {
+        const streamUrl = await resolveDriveStreamUrl(targetDriveId);
 
-      const fetchHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-      };
-
-      if (rangeHeader) {
-        fetchHeaders['Range'] = rangeHeader;
-      }
-
-      let upstreamRes = await fetch(targetUrl, {
-        method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-        headers: fetchHeaders,
-        redirect: 'manual',
-      });
-
-      // If usercontent returns 404, fallback to drive.google.com/uc
-      if (upstreamRes.status === 404) {
-        targetUrl = `https://drive.google.com/uc?export=download&id=${targetDriveId}&confirm=t`;
-        upstreamRes = await fetch(targetUrl, {
-          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-          headers: fetchHeaders,
-          redirect: 'manual',
+        // Redirect directly to the authenticated Google CDN stream
+        // Eliminates 300s serverless function timeout and locked stream errors
+        res.writeHead(302, {
+          'Location': streamUrl,
+          'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
         });
-      }
-
-      const cookies: string[] = [];
-      const c1 = upstreamRes.headers.get('set-cookie');
-      if (c1) cookies.push(c1);
-
-      // Follow redirect hops (Google Drive typically issues 302/303 to direct CDN node)
-      let hops = 0;
-      while (
-        (upstreamRes.status === 301 || upstreamRes.status === 302 || upstreamRes.status === 303 || upstreamRes.status === 307) &&
-        hops < 5
-      ) {
-        hops++;
-        const location = upstreamRes.headers.get('location');
-        if (!location) break;
-
-        targetUrl = location.startsWith('http') ? location : new URL(location, targetUrl).toString();
-
-        const hopHeaders: Record<string, string> = {
-          ...fetchHeaders,
-          ...(cookies.length > 0 ? { 'Cookie': cookies.join('; ') } : {}),
-        };
-
-        upstreamRes = await fetch(targetUrl, {
-          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-          headers: hopHeaders,
-          redirect: 'manual',
-        });
-
-        const hopCookie = upstreamRes.headers.get('set-cookie');
-        if (hopCookie) cookies.push(hopCookie);
-      }
-
-      // If Google returned HTML virus scan warning page, parse confirmation form
-      const contentType = upstreamRes.headers.get('content-type') || '';
-      if (upstreamRes.status === 200 && contentType.includes('text/html')) {
-        const html = await upstreamRes.text();
-        const parsedForm = extractConfirmForm(html);
-
-        if (parsedForm) {
-          const formUrl = new URL(parsedForm.actionUrl);
-          for (const [k, v] of Object.entries(parsedForm.params)) {
-            formUrl.searchParams.set(k, v);
-          }
-          if (!formUrl.searchParams.has('confirm')) {
-            formUrl.searchParams.set('confirm', 't');
-          }
-
-          let secondRes = await fetch(formUrl.toString(), {
-            method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-            headers: {
-              ...fetchHeaders,
-              ...(cookies.length > 0 ? { 'Cookie': cookies.join('; ') } : {}),
-            },
-            redirect: 'manual',
-          });
-
-          // Follow second redirect to video CDN
-          let hops2 = 0;
-          while (
-            (secondRes.status === 301 || secondRes.status === 302 || secondRes.status === 303 || secondRes.status === 307) &&
-            hops2 < 5
-          ) {
-            hops2++;
-            const loc2 = secondRes.headers.get('location');
-            if (!loc2) break;
-            const finalUrl = loc2.startsWith('http') ? loc2 : new URL(loc2, formUrl.toString()).toString();
-
-            secondRes = await fetch(finalUrl, {
-              method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-              headers: {
-                ...fetchHeaders,
-                ...(cookies.length > 0 ? { 'Cookie': cookies.join('; ') } : {}),
-              },
-              redirect: 'manual',
-            });
-          }
-
-          upstreamRes = secondRes;
-        }
-      }
-
-      // If Google Drive returned an error status (e.g. 404 or 403)
-      if (upstreamRes.status >= 400) {
-        console.error(`Google Drive responded with ${upstreamRes.status} for fileId: ${targetDriveId}`);
-        res.writeHead(upstreamRes.status, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ 
-          error: 'Video unavailable', 
-          status: upstreamRes.status,
-          message: upstreamRes.status === 404 
-            ? 'The video was not found on Google Drive. Please verify the link.'
-            : 'Access denied by Google Drive. Ensure file sharing is set to "Anyone with the link can view".'
+        res.end();
+        return;
+      } catch (driveErr: any) {
+        console.error('Google Drive stream resolution error:', driveErr);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'Video stream resolution failed',
+          message: driveErr?.message || 'Could not stream file from Google Drive',
         }));
         return;
       }
-
-      // Check if upstream successfully resolved video bytes or partial content
-      const statusCode = upstreamRes.status === 206 ? 206 : (upstreamRes.status === 200 ? 200 : upstreamRes.status);
-
-      const responseHeaders: Record<string, string> = {
-        'Content-Type': upstreamRes.headers.get('content-type') || 'video/mp4',
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
-      };
-
-      const contentLength = upstreamRes.headers.get('content-length');
-      if (contentLength) responseHeaders['Content-Length'] = contentLength;
-
-      const contentRange = upstreamRes.headers.get('content-range');
-      if (contentRange) responseHeaders['Content-Range'] = contentRange;
-
-      res.writeHead(statusCode, responseHeaders);
-
-      if (req.method === 'HEAD') {
-        res.end();
-        return;
-      }
-
-      if (upstreamRes.body) {
-        const nodeReadable = Readable.fromWeb(upstreamRes.body as any);
-
-        req.on('close', () => {
-          try {
-            nodeReadable.destroy();
-          } catch {
-            // Ignore stream termination errors
-          }
-        });
-
-        nodeReadable.pipe(res);
-      } else {
-        res.end();
-      }
-      return;
     }
 
-    // 4. Fallback for Supabase storage or external URLs
-    res.writeHead(302, { Location: targetVideoPath });
+    // 5. Fallback for Supabase storage or external URLs
+    res.writeHead(302, {
+      'Location': targetVideoPath,
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end();
   } catch (error: any) {
     console.error('Video relay error:', error);

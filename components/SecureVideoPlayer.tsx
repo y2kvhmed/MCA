@@ -270,6 +270,9 @@ export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay
             e.stopPropagation();
             return false;
           },
+          onError: () => {
+            setError('Video playback failed. Please check your connection or link.');
+          },
           style: {
             width: '100%',
             height: isFullscreen ? '100vh' : 'auto',
@@ -385,6 +388,10 @@ export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay
         resizeMode={ResizeMode.CONTAIN}
         shouldPlay={autoplay}
         isLooping={false}
+        onError={(err: any) => {
+          console.error('Native video error:', err);
+          setError('Video playback failed. Please check your connection or link.');
+        }}
       />
       {/* Mobile Watermark Overlay */}
       <View style={styles.nativeWatermarkOverlay} pointerEvents="none">
