@@ -19,33 +19,36 @@ export async function loadTeacherDashboard(): Promise<DashboardData> {
       return { user, stats: {}, error: 'User is not a teacher' };
     }
 
-    if (!user.school_id) {
-      return { 
-        user, 
-        stats: { totalStudents: 0, myAssignments: 0, materialsSent: 0 }, 
-        assignments: [],
-        error: 'Teacher has no school assigned' 
-      };
-    }
-
-    // Load stats with fallback
-    let stats = { totalStudents: 0, myAssignments: 0, materialsSent: 0 };
-    try {
-      stats = await getSchoolStats(user.school_id);
-    } catch (error) {
-      console.error('Failed to load school stats:', error);
-    }
-
-    // Load assignments with fallback
-    let assignments: any[] = [];
+    // Load all school-wide assignments for the teacher (same source as the
+    // "School Assignments" screen so the dashboard count always matches it).
+    let allAssignments: any[] = [];
     try {
       const { data: assignmentsData } = await getAssignmentsByTeacherSchools(user.id);
-      assignments = assignmentsData?.slice(0, 3) || [];
+      allAssignments = assignmentsData || [];
     } catch (error) {
       console.error('Failed to load assignments:', error);
     }
 
-    return { user, stats, assignments };
+    // Load stats with fallback. The assignment count is always derived from the
+    // school-wide list above so it can never drift from what the user sees.
+    let stats = { totalStudents: 0, myAssignments: allAssignments.length, materialsSent: 0 };
+    if (user.school_id) {
+      try {
+        const schoolStats = await getSchoolStats(user.school_id);
+        stats = { ...schoolStats, myAssignments: allAssignments.length };
+      } catch (error) {
+        console.error('Failed to load school stats:', error);
+      }
+    }
+
+    const assignments = allAssignments.slice(0, 3);
+
+    return {
+      user,
+      stats,
+      assignments,
+      error: user.school_id ? undefined : 'Teacher has no school assigned',
+    };
   } catch (error) {
     console.error('Teacher dashboard error:', error);
     return { 
