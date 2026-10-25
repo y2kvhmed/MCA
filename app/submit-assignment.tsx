@@ -313,7 +313,7 @@ export default function SubmitAssignment() {
               color={isOverdue ? Colors.error : (daysUntilDue !== null && daysUntilDue <= 1) ? Colors.warning : Colors.text.secondary} />
             <Text style={[styles.dueText, isOverdue && styles.dueTextOverdue,
               (daysUntilDue !== null && daysUntilDue <= 1 && !isOverdue) && styles.dueTextUrgent]}>
-              {isOverdue ? 'Missing - ' : 'Due '}{formatDueDate(assignment.due_date)}
+              {isOverdue ? 'Missing - ' : ''}{formatDueDate(assignment.due_date)}
             </Text>
           </View>
         )}

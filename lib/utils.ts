@@ -77,13 +77,16 @@ export function formatDueDate(dueDateString: string): string {
   if (isNaN(dueDate.getTime())) return 'Invalid date';
 
   const now = new Date();
-  const diffMs = dueDate.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / 86400000);
+
+  // Compare calendar days (local midnight boundaries), not elapsed milliseconds.
+  // Using Math.ceil on the raw diff treated any due time later today as "tomorrow".
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(dueDate) - startOfDay(now)) / 86400000);
 
   const timeStr = dueDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   const dateStr = dueDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
-  if (diffMs < 0) {
+  if (dueDate.getTime() < now.getTime()) {
     return `Overdue (was due ${dateStr} at ${timeStr})`;
   }
   if (diffDays === 0) {

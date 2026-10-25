@@ -170,7 +170,7 @@ export default function TeacherAssignments() {
                     <View style={styles.metaItem}>
                       <Ionicons name="calendar" size={14} color={Colors.text.secondary} />
                       <Text style={styles.metaText}>
-                        Due {formatDueDate(assignment.due_date)}
+                        {formatDueDate(assignment.due_date)}
                       </Text>
                     </View>
                   )}
