@@ -121,8 +121,8 @@ export default function DateTimePicker({
               <TouchableOpacity
                 style={styles.mobilePicker}
                 onPress={() => {
-                  // Fallback for native
-                  setPreset(1);
+                  // Native fallback: default to today at 11:59 PM (never auto-jump days)
+                  setPreset(0, 23, 59);
                 }}
               >
                 <Text style={styles.pickerText}>{dateStr || 'Select Date'}</Text>
@@ -163,20 +163,6 @@ export default function DateTimePicker({
             )}
           </View>
         </View>
-      </View>
-
-      {/* Quick presets */}
-      <View style={styles.presetRow}>
-        <Text style={styles.presetLabel}>Quick Select:</Text>
-        <TouchableOpacity style={styles.presetChip} onPress={() => setPreset(1, 23, 59)}>
-          <Text style={styles.presetChipText}>Tomorrow 11:59 PM</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.presetChip} onPress={() => setPreset(3, 23, 59)}>
-          <Text style={styles.presetChipText}>In 3 Days</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.presetChip} onPress={() => setPreset(7, 23, 59)}>
-          <Text style={styles.presetChipText}>In 1 Week</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Display selected state */}
@@ -238,31 +224,6 @@ const styles = StyleSheet.create({
   pickerText: {
     fontSize: 14,
     color: Colors.text.primary,
-  },
-  presetRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: Spacing.sm,
-  },
-  presetLabel: {
-    fontSize: 12,
-    color: Colors.text.secondary,
-    marginRight: 2,
-  },
-  presetChip: {
-    backgroundColor: Colors.primary + '15',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.primary + '30',
-  },
-  presetChipText: {
-    fontSize: 12,
-    color: Colors.primary,
-    fontWeight: '500',
   },
   selectedBox: {
     flexDirection: 'row',

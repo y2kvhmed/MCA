@@ -948,6 +948,56 @@ export async function getSchoolStats(schoolId: string) {
   }
 }
 
+// Get stats scoped to every school the teacher is assigned to.
+// Used by the teacher dashboard so the cards reflect the teacher's schools
+// rather than only their primary school_id (which may be null).
+export async function getTeacherSchoolStats(teacherId: string) {
+  const empty = { totalStudents: 0, totalTeachers: 0, myAssignments: 0, materialsSent: 0 };
+  try {
+    const schoolIds = await getTeacherSchoolIds(teacherId);
+
+    let totalStudents = 0;
+    let totalTeachers = 0;
+    let materialsSent = 0;
+
+    if (schoolIds.length > 0) {
+      const [studentsRes, teachersRes, materialsRes] = await Promise.all([
+        supabase
+          .from('app_users')
+          .select('id')
+          .in('school_id', schoolIds)
+          .eq('role', 'student')
+          .eq('is_active', true),
+        supabase
+          .from('app_users')
+          .select('id')
+          .in('school_id', schoolIds)
+          .eq('role', 'teacher')
+          .eq('is_active', true),
+        supabase.from('study_materials').select('id').in('school_id', schoolIds),
+      ]);
+
+      totalStudents = studentsRes.data?.length || 0;
+      totalTeachers = teachersRes.data?.length || 0;
+      materialsSent = materialsRes.data?.length || 0;
+    }
+
+    // Assignments use the same school-wide source as the School Assignments screen
+    let myAssignments = 0;
+    try {
+      const { data: assignments } = await getAssignmentsByTeacherSchools(teacherId);
+      myAssignments = assignments?.length || 0;
+    } catch (e) {
+      console.warn('getTeacherSchoolStats assignments error:', e);
+    }
+
+    return { totalStudents, totalTeachers, myAssignments, materialsSent };
+  } catch (error) {
+    console.error('Error getting teacher school stats:', error);
+    return empty;
+  }
+}
+
 
 
 // Create material in study_materials table

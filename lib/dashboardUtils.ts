@@ -1,5 +1,5 @@
 import { getCurrentUser } from './auth';
-import { getSchoolStats, getStudentStats, getAdminStats, getAssignmentsByTeacherSchools, getAssignmentsForStudent } from './database';
+import { getTeacherSchoolStats, getStudentStats, getAdminStats, getAssignmentsByTeacherSchools, getAssignmentsForStudent } from './database';
 
 export interface DashboardData {
   user: any;
@@ -29,26 +29,20 @@ export async function loadTeacherDashboard(): Promise<DashboardData> {
       console.error('Failed to load assignments:', error);
     }
 
-    // Load stats with fallback. The assignment count is always derived from the
-    // school-wide list above so it can never drift from what the user sees.
-    let stats = { totalStudents: 0, myAssignments: allAssignments.length, materialsSent: 0 };
-    if (user.school_id) {
-      try {
-        const schoolStats = await getSchoolStats(user.school_id);
-        stats = { ...schoolStats, myAssignments: allAssignments.length };
-      } catch (error) {
-        console.error('Failed to load school stats:', error);
-      }
+    // Stats are scoped to every school the teacher is assigned to, so the
+    // Students / Materials cards reflect their schools instead of only their
+    // primary school_id (which is often null for multi-school teachers).
+    let stats = { totalStudents: 0, totalTeachers: 0, myAssignments: allAssignments.length, materialsSent: 0 };
+    try {
+      const schoolStats = await getTeacherSchoolStats(user.id);
+      stats = { ...schoolStats, myAssignments: allAssignments.length };
+    } catch (error) {
+      console.error('Failed to load teacher school stats:', error);
     }
 
     const assignments = allAssignments.slice(0, 3);
 
-    return {
-      user,
-      stats,
-      assignments,
-      error: user.school_id ? undefined : 'Teacher has no school assigned',
-    };
+    return { user, stats, assignments };
   } catch (error) {
     console.error('Teacher dashboard error:', error);
     return { 
