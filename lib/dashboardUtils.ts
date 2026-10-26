@@ -95,7 +95,31 @@ export async function loadStudentDashboard(): Promise<DashboardData> {
       .eq('student_id', user.id);
     submittedCount = subCount || 0;
 
-    const stats = { totalMaterials, totalAssignments, submittedCount };
+    // Average test grade (%) across all of the student's recorded tests
+    let avgTestGrade = 0;
+    try {
+      const { data: testRows } = await supabase
+        .from('student_test_results')
+        .select('score, max_score, percentage')
+        .eq('student_id', user.id);
+
+      if (testRows && testRows.length > 0) {
+        const pcts = testRows
+          .map((t: any) => {
+            if (t.percentage !== null && t.percentage !== undefined) return Number(t.percentage);
+            const max = Number(t.max_score) || 0;
+            return max > 0 ? ((Number(t.score) || 0) / max) * 100 : 0;
+          })
+          .filter((n: number) => !isNaN(n));
+        if (pcts.length > 0) {
+          avgTestGrade = Math.round(pcts.reduce((a: number, b: number) => a + b, 0) / pcts.length);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load average test grade:', error);
+    }
+
+    const stats = { totalMaterials, totalAssignments, submittedCount, avgTestGrade };
 
     // Load assignments with fallback
     let assignments: any[] = [];

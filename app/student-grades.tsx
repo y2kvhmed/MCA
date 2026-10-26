@@ -1,41 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { supabase } from '../lib/supabase';
-import { formatRelativeDate, handleError } from '../lib/utils';
+import { getStudentTestResults } from '../lib/database';
+import { handleError } from '../lib/utils';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
-interface AssignmentProgress {
+interface TestResult {
   id: string;
   title: string;
-  description: string;
-  due_date: string;
-  created_at: string;
-  status: 'submitted' | 'missing';
-  submitted_at?: string;
-  grade?: number | null;
-  max_score?: number;
-  feedback?: string;
+  test_date: string;
+  score: number;
+  max_score: number;
+  percentage: number;
+  notes?: string | null;
 }
+
+const gradeColor = (pct: number) => {
+  if (pct >= 80) return Colors.success;
+  if (pct >= 60) return Colors.warning;
+  return Colors.error;
+};
 
 export default function StudentGrades() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
-  const [assignments, setAssignments] = useState<AssignmentProgress[]>([]);
+  const [tests, setTests] = useState<TestResult[]>([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalAssignments: 0,
-    submittedAssignments: 0,
-    missingAssignments: 0,
-    completionPercentage: 0,
-  });
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -48,93 +45,69 @@ export default function StudentGrades() {
         router.replace('/login');
         return;
       }
-      setUser(currentUser);
 
-      // Load all assignments for student's school or global
-      let assignmentsQuery = supabase
-        .from('assignments')
-        .select('*')
-        .order('due_date', { ascending: false });
+      const { data } = await getStudentTestResults(currentUser.id);
 
-      if (currentUser.school_id) {
-        assignmentsQuery = assignmentsQuery.or(`school_id.eq.${currentUser.school_id},school_id.is.null`);
-      }
-
-      const { data: assignmentsData, error: assignmentsError } = await assignmentsQuery;
-
-      if (assignmentsError) throw assignmentsError;
-
-      // Load student's submissions with grades
-      const { data: submissionsData, error: submissionsError } = await supabase
-        .from('submissions')
-        .select('assignment_id, submitted_at, grade, percentage, feedback, status')
-        .eq('student_id', currentUser.id);
-
-      if (submissionsError) throw submissionsError;
-
-      // Create a map of submitted assignments
-      const submittedMap = new Map();
-      submissionsData?.forEach(sub => {
-        submittedMap.set(sub.assignment_id, sub);
-      });
-
-      // Combine data
-      const progressData: AssignmentProgress[] = (assignmentsData || []).map(assignment => {
-        const submission = submittedMap.get(assignment.id);
-        const status: 'submitted' | 'missing' = submission ? 'submitted' : 'missing';
+      const rows: TestResult[] = (data || []).map((t: any) => {
+        const max = Number(t.max_score) > 0 ? Number(t.max_score) : 100;
+        const score = Number(t.score) || 0;
+        const pct =
+          t.percentage !== null && t.percentage !== undefined
+            ? Number(t.percentage)
+            : max > 0
+            ? (score / max) * 100
+            : 0;
         return {
-          id: assignment.id,
-          title: assignment.title,
-          description: assignment.description,
-          due_date: assignment.due_date,
-          created_at: assignment.created_at,
-          status,
-          submitted_at: submission?.submitted_at,
-          grade: submission?.grade,
-          max_score: assignment.max_score || 100,
-          feedback: submission?.feedback,
+          id: t.id,
+          title: t.title,
+          test_date: t.test_date,
+          score,
+          max_score: max,
+          percentage: Math.round(pct),
+          notes: t.notes,
         };
       });
 
-      setAssignments(progressData);
-
-      // Calculate statistics
-      const total = progressData.length;
-      const completed = progressData.filter(a => a.status === 'submitted').length;
-      const missing = progressData.filter(a => a.status === 'missing').length;
-      const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-      setStats({
-        totalAssignments: total,
-        submittedAssignments: completed,
-        missingAssignments: missing,
-        completionPercentage: percentage,
+      // Newest first
+      rows.sort((a, b) => {
+        const da = a.test_date ? new Date(a.test_date).getTime() : 0;
+        const db = b.test_date ? new Date(b.test_date).getTime() : 0;
+        return db - da;
       });
+
+      setTests(rows);
     } catch (error) {
       console.error('Load data error:', error);
-      handleError(error, 'Failed to load assignment progress');
+      handleError(error, 'Failed to load test grades');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    if (status === 'submitted') return Colors.success;
-    return Colors.error;
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
   };
 
-  const getStatusIcon = (status: string): keyof typeof Ionicons.glyphMap => {
-    if (status === 'submitted') return 'checkmark-circle';
-    return 'close-circle';
-  };
-
-  const isOverdue = (dueDate: string) => {
-    return new Date(dueDate) < new Date();
+  const formatTestDate = (value?: string | null) => {
+    if (!value) return '';
+    // Date-only strings are parsed as local time to avoid off-by-one day.
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const d = dateOnly ? new Date(`${value}T00:00:00`) : new Date(value);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
   if (loading) {
     return <LoadingSpinner />;
   }
+
+  const testCount = tests.length;
+  const avgGrade = testCount > 0
+    ? Math.round(tests.reduce((sum, t) => sum + t.percentage, 0) / testCount)
+    : 0;
+  const bestGrade = testCount > 0 ? Math.max(...tests.map(t => t.percentage)) : 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -142,149 +115,92 @@ export default function StudentGrades() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Assignment Progress</Text>
+        <Text style={styles.headerTitle}>Test Grades</Text>
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Statistics Card */}
+      <ScrollView
+        style={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        {/* Summary Card */}
         <Card style={styles.statsCard}>
-          <Text style={styles.statsTitle}>Completion Summary</Text>
-          
+          <Text style={styles.statsTitle}>Grade Summary</Text>
+
           <View style={styles.statsGrid}>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{stats.totalAssignments}</Text>
-              <Text style={styles.statLabel}>Total</Text>
+              <Text style={styles.statValue}>{testCount}</Text>
+              <Text style={styles.statLabel}>Tests Taken</Text>
             </View>
             <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: Colors.success }]}>
-                {stats.submittedAssignments}
+              <Text style={[styles.statValue, { color: gradeColor(bestGrade) }]}>
+                {bestGrade}%
               </Text>
-              <Text style={styles.statLabel}>Submitted</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: Colors.error }]}>
-                {stats.missingAssignments}
-              </Text>
-              <Text style={styles.statLabel}>Missing</Text>
+              <Text style={styles.statLabel}>Best</Text>
             </View>
           </View>
 
           <View style={styles.percentageContainer}>
-            <Text style={styles.percentageLabel}>Completion Rate</Text>
-            <Text style={[styles.percentageValue, { 
-              color: stats.completionPercentage >= 80 ? Colors.success : 
-                     stats.completionPercentage >= 60 ? Colors.warning : Colors.error 
-            }]}>
-              {stats.completionPercentage}%
+            <Text style={styles.percentageLabel}>Average Grade</Text>
+            <Text style={[styles.percentageValue, { color: gradeColor(avgGrade) }]}>
+              {avgGrade}%
             </Text>
           </View>
 
           <View style={styles.progressContainer}>
             <View style={styles.progressBar}>
-              <View 
+              <View
                 style={[
-                  styles.progressFill, 
-                  { 
-                    width: `${stats.completionPercentage}%`,
-                    backgroundColor: stats.completionPercentage >= 80 ? Colors.success : 
-                                   stats.completionPercentage >= 60 ? Colors.warning : Colors.error
-                  }
-                ]} 
+                  styles.progressFill,
+                  { width: `${Math.min(avgGrade, 100)}%`, backgroundColor: gradeColor(avgGrade) },
+                ]}
               />
             </View>
           </View>
         </Card>
 
-        {/* Assignments List */}
-        {assignments.length === 0 ? (
+        {/* Test Results List */}
+        {tests.length === 0 ? (
           <EmptyState
-            icon="document-text"
-            title="No Assignments Yet"
-            description="Your assignments will appear here once your teachers create them."
+            icon="trophy"
+            title="No Test Grades Yet"
+            description="Your test scores will appear here once your teachers add them."
           />
         ) : (
-          <View style={styles.assignmentsContainer}>
-            <Text style={styles.assignmentsTitle}>All Assignments</Text>
-            
-            {assignments.map((assignment) => (
-              <Card key={assignment.id} style={styles.assignmentCard}>
-                <View style={styles.assignmentHeader}>
-                  <View style={styles.assignmentInfo}>
-                    <Text style={styles.assignmentTitle}>{assignment.title}</Text>
-                    {assignment.description && (
-                      <Text style={styles.assignmentDescription} numberOfLines={2}>
-                        {assignment.description}
-                      </Text>
-                    )}
-                    <View style={styles.assignmentMeta}>
+          <View style={styles.listContainer}>
+            <Text style={styles.listTitle}>Test Results</Text>
+
+            {tests.map((test) => (
+              <Card key={test.id} style={styles.testCard}>
+                <View style={styles.testHeader}>
+                  <View style={styles.testInfo}>
+                    <Text style={styles.testTitle}>{test.title}</Text>
+                    <View style={styles.testMeta}>
                       <Ionicons name="calendar" size={14} color={Colors.text.secondary} />
-                      <Text style={[
-                        styles.dueDate,
-                        isOverdue(assignment.due_date) && assignment.status === 'missing' && styles.overdue
-                      ]}>
-                        Due: {new Date(assignment.due_date).toLocaleDateString()}
+                      <Text style={styles.testDate}>{formatTestDate(test.test_date)}</Text>
+                    </View>
+                    <View style={styles.scoreRow}>
+                      <Ionicons name="ribbon" size={15} color={gradeColor(test.percentage)} />
+                      <Text style={styles.scoreText}>
+                        Score: {test.score} / {test.max_score}
                       </Text>
                     </View>
-                    {assignment.status === 'submitted' && assignment.submitted_at && (
-                      <View style={styles.submittedInfo}>
-                        <Ionicons name="checkmark-circle" size={14} color={Colors.success} />
-                        <Text style={styles.submittedText}>
-                          Submitted {formatRelativeDate(assignment.submitted_at)}
-                        </Text>
-                      </View>
-                    )}
 
-                    {assignment.status === 'submitted' && (
-                      <View style={styles.gradeInfoRow}>
-                        <Ionicons 
-                          name={assignment.grade !== null && assignment.grade !== undefined ? "ribbon" : "time-outline"} 
-                          size={15} 
-                          color={assignment.grade !== null && assignment.grade !== undefined ? Colors.success : Colors.text.secondary} 
-                        />
-                        <Text style={[
-                          styles.gradeValueText,
-                          assignment.grade !== null && assignment.grade !== undefined ? { color: Colors.success, fontWeight: '700' } : { color: Colors.text.secondary }
-                        ]}>
-                          {assignment.grade !== null && assignment.grade !== undefined 
-                            ? `Grade: ${assignment.grade} / ${assignment.max_score || 100}` 
-                            : 'Not Graded'}
-                        </Text>
-                      </View>
-                    )}
-
-                    {assignment.feedback ? (
-                      <View style={styles.feedbackBox}>
-                        <Text style={styles.feedbackLabel}>Teacher Comment:</Text>
-                        <Text style={styles.feedbackContent}>{assignment.feedback}</Text>
+                    {test.notes ? (
+                      <View style={styles.notesBox}>
+                        <Text style={styles.notesLabel}>Teacher Note:</Text>
+                        <Text style={styles.notesContent}>{test.notes}</Text>
                       </View>
                     ) : null}
                   </View>
-                  
-                  <View style={styles.statusBadge}>
-                    <Ionicons 
-                      name={getStatusIcon(assignment.status)} 
-                      size={32} 
-                      color={getStatusColor(assignment.status)} 
-                    />
-                    <Text style={[
-                      styles.statusText,
-                      { color: getStatusColor(assignment.status) }
-                    ]}>
-                      {assignment.status === 'submitted' ? 'Submitted' : 'Missing'}
+
+                  <View style={styles.gradeBadge}>
+                    <Text style={[styles.gradeBadgeValue, { color: gradeColor(test.percentage) }]}>
+                      {test.percentage}%
                     </Text>
+                    <Text style={styles.gradeBadgeLabel}>Grade</Text>
                   </View>
                 </View>
-
-                {assignment.status === 'missing' && (
-                  <TouchableOpacity
-                    style={styles.submitButton}
-                    onPress={() => router.push(`/submit-assignment?assignmentId=${assignment.id}`)}
-                  >
-                    <Text style={styles.submitButtonText}>Submit Assignment</Text>
-                    <Ionicons name="arrow-forward" size={16} color={Colors.text.inverse} />
-                  </TouchableOpacity>
-                )}
               </Card>
             ))}
           </View>
@@ -368,97 +284,67 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 6,
   },
-  assignmentsContainer: {
+  listContainer: {
     flex: 1,
   },
-  assignmentsTitle: {
+  listTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: Colors.text.primary,
     marginBottom: Spacing.lg,
   },
-  assignmentCard: {
+  testCard: {
     marginBottom: Spacing.md,
   },
-  assignmentHeader: {
+  testHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
-  assignmentInfo: {
+  testInfo: {
     flex: 1,
     marginRight: Spacing.md,
   },
-  assignmentTitle: {
+  testTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: Colors.text.primary,
     marginBottom: Spacing.xs,
   },
-  assignmentDescription: {
-    fontSize: 14,
-    color: Colors.text.secondary,
-    marginBottom: Spacing.sm,
-  },
-  assignmentMeta: {
+  testMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: Spacing.xs,
   },
-  dueDate: {
+  testDate: {
     fontSize: 12,
     color: Colors.text.secondary,
     marginLeft: Spacing.sm,
   },
-  overdue: {
-    color: Colors.error,
-    fontWeight: '600',
-  },
-  submittedInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: Spacing.xs,
-  },
-  submittedText: {
-    fontSize: 12,
-    color: Colors.success,
-    marginLeft: Spacing.sm,
-    fontWeight: '500',
-  },
-  statusBadge: {
-    alignItems: 'center',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: Spacing.xs,
-  },
-
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.primary,
-    padding: Spacing.md,
-    borderRadius: 8,
-    marginTop: Spacing.md,
-  },
-  submitButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text.inverse,
-    marginRight: Spacing.sm,
-  },
-  gradeInfoRow: {
+  scoreRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginTop: 6,
   },
-  gradeValueText: {
+  scoreText: {
     fontSize: 13,
+    color: Colors.text.primary,
   },
-  feedbackBox: {
+  gradeBadge: {
+    alignItems: 'center',
+  },
+  gradeBadgeValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  gradeBadgeLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+    marginTop: Spacing.xs,
+  },
+  notesBox: {
     marginTop: 8,
     padding: 8,
     backgroundColor: Colors.background,
@@ -466,13 +352,13 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: Colors.primary,
   },
-  feedbackLabel: {
+  notesLabel: {
     fontSize: 12,
     fontWeight: '700',
     color: Colors.text.primary,
     marginBottom: 2,
   },
-  feedbackContent: {
+  notesContent: {
     fontSize: 12,
     color: Colors.text.secondary,
     lineHeight: 16,

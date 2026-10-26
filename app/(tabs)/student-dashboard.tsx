@@ -144,18 +144,16 @@ export default function StudentDashboard() {
 
           <TouchableOpacity 
             style={styles.statCardTouchable} 
-            onPress={() => router.push('/student-assignment-list')}
+            onPress={() => router.push('/student-grades')}
             activeOpacity={0.8}
           >
             <AnimatedCard style={styles.statCard} delay={400}>
               <View style={styles.statContent}>
-                <Ionicons name="pie-chart" size={26} color="#3B82F6" />
-                <Text style={[styles.statValue, { color: '#2563EB' }]}>
-                  {((stats.totalAssignments || 0) > 0)
-                    ? `${Math.round(((stats.submittedCount || 0) / (stats.totalAssignments || 1)) * 100)}%`
-                    : '0%'}
+                <Ionicons name="trophy" size={26} color={Colors.warning} />
+                <Text style={[styles.statValue, { color: Colors.warning }]}>
+                  {stats.avgTestGrade != null ? `${stats.avgTestGrade}%` : '—'}
                 </Text>
-                <Text style={styles.statLabel}>Completion</Text>
+                <Text style={styles.statLabel}>Avg Grade</Text>
               </View>
             </AnimatedCard>
           </TouchableOpacity>
