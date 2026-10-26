@@ -977,16 +977,17 @@ export async function getSchoolStats(schoolId: string) {
 // Used by the teacher dashboard so the cards reflect the teacher's schools
 // rather than only their primary school_id (which may be null).
 export async function getTeacherSchoolStats(teacherId: string) {
-  const empty = { totalStudents: 0, totalTeachers: 0, myAssignments: 0, materialsSent: 0 };
+  const empty = { totalStudents: 0, totalTeachers: 0, myAssignments: 0, materialsSent: 0, totalTests: 0 };
   try {
     const schoolIds = await getTeacherSchoolIds(teacherId);
 
     let totalStudents = 0;
     let totalTeachers = 0;
     let materialsSent = 0;
+    let totalTests = 0;
 
     if (schoolIds.length > 0) {
-      const [studentsRes, teachersRes, materialsRes] = await Promise.all([
+      const [studentsRes, teachersRes, materialsRes, testsRes] = await Promise.all([
         supabase
           .from('app_users')
           .select('id')
@@ -1000,11 +1001,13 @@ export async function getTeacherSchoolStats(teacherId: string) {
           .eq('role', 'teacher')
           .eq('is_active', true),
         supabase.from('study_materials').select('id').in('school_id', schoolIds),
+        supabase.from('student_test_results').select('id').in('school_id', schoolIds),
       ]);
 
       totalStudents = studentsRes.data?.length || 0;
       totalTeachers = teachersRes.data?.length || 0;
       materialsSent = materialsRes.data?.length || 0;
+      totalTests = testsRes.data?.length || 0;
     }
 
     // Assignments use the same school-wide source as the School Assignments screen
@@ -1016,7 +1019,7 @@ export async function getTeacherSchoolStats(teacherId: string) {
       console.warn('getTeacherSchoolStats assignments error:', e);
     }
 
-    return { totalStudents, totalTeachers, myAssignments, materialsSent };
+    return { totalStudents, totalTeachers, myAssignments, materialsSent, totalTests };
   } catch (error) {
     console.error('Error getting teacher school stats:', error);
     return empty;

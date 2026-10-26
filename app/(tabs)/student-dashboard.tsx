@@ -96,65 +96,63 @@ export default function StudentDashboard() {
           </View>
         </FadeInView>
 
-        {/* Stats Cards - Centered with space between them */}
+        {/* Stats Grid */}
         <View style={styles.statsContainer}>
-          <TouchableOpacity 
-            style={styles.statCardTouchable} 
+          <TouchableOpacity
+            style={styles.statCardTouchable}
             onPress={() => router.push('/student-materials')}
             activeOpacity={0.8}
           >
             <AnimatedCard style={styles.statCard} delay={100}>
-              <View style={styles.statContent}>
-                <Ionicons name="folder" size={26} color={Colors.primary} />
-                <Text style={styles.statValue}>{stats.totalMaterials || 0}</Text>
-                <Text style={styles.statLabel}>Materials</Text>
+              <View style={[styles.statIcon, { backgroundColor: Colors.info + '20' }]}>
+                <Ionicons name="folder" size={24} color={Colors.info} />
               </View>
+              <Text style={styles.statValue}>{stats.totalMaterials || 0}</Text>
+              <Text style={styles.statLabel}>Materials</Text>
             </AnimatedCard>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.statCardTouchable} 
+
+          <TouchableOpacity
+            style={styles.statCardTouchable}
             onPress={() => router.push('/student-assignment-list')}
             activeOpacity={0.8}
           >
             <AnimatedCard style={styles.statCard} delay={200}>
-              <View style={styles.statContent}>
-                <Ionicons name="document-text" size={26} color={Colors.info} />
-                <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
-                <Text style={styles.statLabel}>Assignments</Text>
+              <View style={[styles.statIcon, { backgroundColor: Colors.warning + '20' }]}>
+                <Ionicons name="document-text" size={24} color={Colors.warning} />
               </View>
+              <Text style={styles.statValue}>{stats.totalAssignments || 0}</Text>
+              <Text style={styles.statLabel}>Assignments</Text>
             </AnimatedCard>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.statCardTouchable} 
+
+          <TouchableOpacity
+            style={styles.statCardTouchable}
             onPress={() => router.push('/student-assignment-list')}
             activeOpacity={0.8}
           >
             <AnimatedCard style={styles.statCard} delay={300}>
-              <View style={styles.statContent}>
-                <Ionicons name="checkmark-circle" size={26} color={Colors.success} />
-                <Text style={[styles.statValue, { color: Colors.success }]}>
-                  {stats.submittedCount || 0}
-                </Text>
-                <Text style={styles.statLabel}>Submitted</Text>
+              <View style={[styles.statIcon, { backgroundColor: Colors.success + '20' }]}>
+                <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
               </View>
+              <Text style={styles.statValue}>{stats.submittedCount || 0}</Text>
+              <Text style={styles.statLabel}>Submitted</Text>
             </AnimatedCard>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.statCardTouchable} 
+          <TouchableOpacity
+            style={styles.statCardTouchable}
             onPress={() => router.push('/student-grades')}
             activeOpacity={0.8}
           >
             <AnimatedCard style={styles.statCard} delay={400}>
-              <View style={styles.statContent}>
-                <Ionicons name="trophy" size={26} color={Colors.warning} />
-                <Text style={[styles.statValue, { color: Colors.warning }]}>
-                  {stats.avgTestGrade != null ? `${stats.avgTestGrade}%` : '—'}
-                </Text>
-                <Text style={styles.statLabel}>Avg Grade</Text>
+              <View style={[styles.statIcon, { backgroundColor: Colors.primary + '20' }]}>
+                <Ionicons name="trophy" size={24} color={Colors.primary} />
               </View>
+              <Text style={styles.statValue}>
+                {stats.avgTestGrade != null ? `${stats.avgTestGrade}%` : '—'}
+              </Text>
+              <Text style={styles.statLabel}>Avg Grade</Text>
             </AnimatedCard>
           </TouchableOpacity>
         </View>
@@ -326,35 +324,37 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.md,
     gap: Spacing.md,
   },
   statCardTouchable: {
-    width: '46%',
+    width: '47%',
   },
   statCard: {
-    borderRadius: 14,
-  },
-  statContent: {
     alignItems: 'center',
+    padding: Spacing.xl,
+    width: '100%',
+  },
+  statIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    minHeight: 95,
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
   },
   statValue: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     color: Colors.text.primary,
-    marginTop: Spacing.sm,
   },
   statLabel: {
     fontSize: 12,
     color: Colors.text.secondary,
-    marginTop: Spacing.xs,
+    marginTop: 2,
   },
   actionsCard: {
     margin: Spacing.lg,

@@ -32,7 +32,7 @@ export async function loadTeacherDashboard(): Promise<DashboardData> {
     // Stats are scoped to every school the teacher is assigned to, so the
     // Students / Materials cards reflect their schools instead of only their
     // primary school_id (which is often null for multi-school teachers).
-    let stats = { totalStudents: 0, totalTeachers: 0, myAssignments: allAssignments.length, materialsSent: 0 };
+    let stats = { totalStudents: 0, totalTeachers: 0, myAssignments: allAssignments.length, materialsSent: 0, totalTests: 0 };
     try {
       const schoolStats = await getTeacherSchoolStats(user.id);
       stats = { ...schoolStats, myAssignments: allAssignments.length };

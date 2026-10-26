@@ -83,36 +83,62 @@ export default function TeacherDashboard() {
           </View>
         </FadeInView>
 
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <TouchableOpacity onPress={() => router.push('/teacher-assignments')}>
-            <Card style={styles.statCard}>
-              <View style={styles.statContent}>
-                <Ionicons name="document-text" size={24} color={Colors.primary} />
-                <Text style={styles.statValue}>{stats.myAssignments || 0}</Text>
-                <Text style={styles.statLabel}>Assignments</Text>
+        {/* Stats Grid */}
+        <View style={styles.statsGrid}>
+          <TouchableOpacity
+            style={styles.statCardTouchable}
+            activeOpacity={0.8}
+            onPress={() => router.push('/teacher-assignments')}
+          >
+            <AnimatedCard style={styles.statCard} delay={100}>
+              <View style={[styles.statIcon, { backgroundColor: Colors.warning + '20' }]}>
+                <Ionicons name="document-text" size={24} color={Colors.warning} />
               </View>
-            </Card>
+              <Text style={styles.statValue}>{stats.myAssignments || 0}</Text>
+              <Text style={styles.statLabel}>Assignments</Text>
+            </AnimatedCard>
           </TouchableOpacity>
-          
-          <TouchableOpacity onPress={() => router.push('/materials-list')}>
-            <Card style={styles.statCard}>
-              <View style={styles.statContent}>
+
+          <TouchableOpacity
+            style={styles.statCardTouchable}
+            activeOpacity={0.8}
+            onPress={() => router.push('/materials-list')}
+          >
+            <AnimatedCard style={styles.statCard} delay={150}>
+              <View style={[styles.statIcon, { backgroundColor: Colors.info + '20' }]}>
                 <Ionicons name="folder" size={24} color={Colors.info} />
-                <Text style={styles.statValue}>{stats.materialsSent || 0}</Text>
-                <Text style={styles.statLabel}>Materials</Text>
               </View>
-            </Card>
+              <Text style={styles.statValue}>{stats.materialsSent || 0}</Text>
+              <Text style={styles.statLabel}>Materials</Text>
+            </AnimatedCard>
           </TouchableOpacity>
-          
-          <TouchableOpacity onPress={() => router.push('/students-list')}>
-            <Card style={styles.statCard}>
-              <View style={styles.statContent}>
+
+          <TouchableOpacity
+            style={styles.statCardTouchable}
+            activeOpacity={0.8}
+            onPress={() => router.push('/students-list')}
+          >
+            <AnimatedCard style={styles.statCard} delay={200}>
+              <View style={[styles.statIcon, { backgroundColor: Colors.success + '20' }]}>
                 <Ionicons name="people" size={24} color={Colors.success} />
-                <Text style={styles.statValue}>{stats.totalStudents || 0}</Text>
-                <Text style={styles.statLabel}>Students</Text>
               </View>
-            </Card>
+              <Text style={styles.statValue}>{stats.totalStudents || 0}</Text>
+              <Text style={styles.statLabel}>Students</Text>
+            </AnimatedCard>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statCardTouchable}
+            activeOpacity={0.8}
+            onPress={() => router.push('/test-scores')}
+          >
+            <AnimatedCard style={styles.statCard} delay={250}>
+              <View style={[styles.statIcon, { backgroundColor: Colors.primary + '20' }]}>
+                <Ionicons name="stats-chart" size={24} color={Colors.primary} />
+              </View>
+              <Text style={styles.statValue}>{stats.totalTests || 0}</Text>
+              <Text style={styles.statLabel}>Tests</Text>
+            </AnimatedCard>
           </TouchableOpacity>
         </View>
 
@@ -279,31 +305,40 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
   },
-  statsContainer: {
+  statsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    gap: Spacing.sm,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.md,
+    gap: Spacing.md,
+  },
+  statCardTouchable: {
+    width: '47%',
   },
   statCard: {
-    flex: 1,
-  },
-  statCardInner: {
-    flex: 1,
-  },
-  statContent: {
     alignItems: 'center',
+    padding: Spacing.xl,
+    width: '100%',
+  },
+  statIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
   },
   statValue: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     color: Colors.text.primary,
-    marginTop: Spacing.sm,
   },
   statLabel: {
     fontSize: 12,
     color: Colors.text.secondary,
-    marginTop: Spacing.xs,
+    marginTop: 2,
   },
   actionsCard: {
     margin: Spacing.lg,
