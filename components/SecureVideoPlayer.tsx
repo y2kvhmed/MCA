@@ -14,9 +14,10 @@ interface SecureVideoPlayerProps {
   lessonId?: string;
   title?: string;
   autoplay?: boolean;
+  preload?: 'none' | 'metadata' | 'auto';
 }
 
-export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay = false }: SecureVideoPlayerProps) {
+export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay = false, preload = 'metadata' }: SecureVideoPlayerProps) {
   const [videoUri, setVideoUri] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
@@ -264,7 +265,8 @@ export default function SecureVideoPlayer({ videoPath, lessonId, title, autoplay
           controlsList: 'nodownload noplaybackrate nofullscreen',
           playsInline: true,
           disablePictureInPicture: true,
-          preload: 'metadata',
+          autoPlay: autoplay,
+          preload,
           onContextMenu: (e: any) => {
             e.preventDefault();
             e.stopPropagation();

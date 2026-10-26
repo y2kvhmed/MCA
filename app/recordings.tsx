@@ -36,6 +36,9 @@ export default function Recordings() {
   const [recordings, setRecordings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Only the recording the user tapped mounts a video player. Mounting one for every card
+  // made each card hit the stream relay at once, which is what made playback crawl.
+  const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<{
     visible: boolean;
     recording: any | null;
@@ -304,14 +307,27 @@ export default function Recordings() {
                   </View>
                 )}
 
-                {/* Video Player */}
+                {/* Video Player — mounted only for the tapped recording */}
                 {(recording.video_url || recording.video_path) && (
                   <View style={styles.videoContainer}>
-                    <SecureVideoPlayer 
-                      videoPath={recording.video_path || recording.video_url}
-                      lessonId={recording.id}
-                      title={recording.title}
-                    />
+                    {activeRecordingId === recording.id ? (
+                      <SecureVideoPlayer 
+                        videoPath={recording.video_path || recording.video_url}
+                        lessonId={recording.id}
+                        title={recording.title}
+                        autoplay
+                        preload="auto"
+                      />
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.videoPoster}
+                        activeOpacity={0.85}
+                        onPress={() => setActiveRecordingId(recording.id)}
+                      >
+                        <Ionicons name="play-circle" size={64} color="#FFFFFF" />
+                        <Text style={styles.videoPosterText}>Tap to play</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               </AnimatedCard>
@@ -460,6 +476,20 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     borderRadius: 8,
     overflow: 'hidden',
+  },
+  videoPoster: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    maxHeight: 260,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  videoPosterText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '600',
   },
   expiryRow: {
     flexDirection: 'row',

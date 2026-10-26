@@ -37,7 +37,15 @@ const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 // Drive (a 302 redirect made it render that HTML warning page, i.e. "playback failed"), and the
 // relay must clamp whatever range it forwards. Clamping also keeps every invocation small, which
 // is what stops the 300s function timeout this relay used to hit on multi-gigabyte files.
-const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB per request
+const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB per request
+
+// Drive answers the `confirm=t` download URL with a 302 to a signed `*.googleusercontent.com`
+// CDN URL. Re-resolving that redirect on every chunk wastes a full round-trip per request, so we
+// remember the resolved CDN URL for a short window and stream straight from it next time. This
+// value lives only in the (warm) function's memory and is never sent to the client.
+const DRIVE_DOWNLOAD_BASE = 'https://drive.usercontent.google.com/download';
+const upstreamUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const UPSTREAM_URL_TTL_MS = 25 * 60 * 1000; // stay inside the CDN URL's own expiry
 
 /**
  * Extracts Google Drive ID from URLs or raw IDs
@@ -133,17 +141,29 @@ async function proxyDriveStream(
 
   try {
     // `confirm=t` is what makes Drive answer with real bytes instead of the warning page.
-    const upstream = await fetch(
-      `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`,
-      {
+    const driveUrl = `${DRIVE_DOWNLOAD_BASE}?id=${fileId}&export=download&confirm=t`;
+
+    const doFetch = (url: string) =>
+      fetch(url, {
         signal: controller.signal,
         headers: {
           'User-Agent': BROWSER_UA,
           'Accept': '*/*',
           'Range': upstreamRange,
         },
-      }
-    );
+      });
+
+    // Reuse the previously resolved CDN URL so we skip Drive's redirect on subsequent chunks.
+    const cached = upstreamUrlCache.get(fileId);
+    const useCached = !!cached && cached.expiresAt > Date.now();
+    let upstream = await doFetch(useCached ? cached!.url : driveUrl);
+
+    // If the cached URL has expired or been revoked, drop it and resolve a fresh one once.
+    if (useCached && upstream.status !== 206) {
+      await upstream.body?.cancel().catch(() => {});
+      upstreamUrlCache.delete(fileId);
+      upstream = await doFetch(driveUrl);
+    }
 
     const contentType = upstream.headers.get('content-type') || '';
     const contentRange = upstream.headers.get('content-range') || '';
@@ -165,6 +185,14 @@ async function proxyDriveStream(
     const end = Math.min(parseInt(parsed[2], 10), start + CHUNK_SIZE - 1);
     const total = parsed[3] === '*' ? null : parseInt(parsed[3], 10);
     const length = end - start + 1;
+
+    // Remember the resolved CDN URL so later chunks on this warm instance skip the redirect.
+    if (upstream.url && upstream.url.includes('googleusercontent.com')) {
+      upstreamUrlCache.set(fileId, {
+        url: upstream.url,
+        expiresAt: Date.now() + UPSTREAM_URL_TTL_MS,
+      });
+    }
 
     res.writeHead(206, {
       'Content-Type': contentType || 'video/mp4',
