@@ -44,39 +44,38 @@ export default function EnterMarks() {
       if (testError) throw testError;
       setTest(testData);
 
-      // 2. Get Students — scoped to the test's school, falling back to the teacher's
-      // schools (or every student for admins) so the list is never wrongly empty.
-      let studentsData: any[] | null = null;
+      // 2. Get Students — prioritize students in the test's school
+      // but fall back to all accessible students if the test's school has none.
+      let studentQuery = supabase
+        .from('app_users')
+        .select('*, school:schools(id, name)')
+        .eq('role', 'student')
+        .eq('is_active', true)
+        .order('name', { ascending: true });
 
-      if (testData.school_id) {
-        const { data } = await supabase
-          .from('app_users')
-          .select('*')
-          .eq('school_id', testData.school_id)
-          .eq('role', 'student')
-          .eq('is_active', true)
-          .order('name', { ascending: true });
-        studentsData = data;
+      if (currentUser.role !== 'admin') {
+        const schoolIds = await getTeacherSchoolIds(currentUser.id);
+        if (schoolIds.length > 0) {
+          studentQuery = studentQuery.in('school_id', schoolIds);
+        } else {
+          setStudents([]);
+          setLoading(false);
+          return;
+        }
       }
 
-      if (!studentsData || studentsData.length === 0) {
-        let fallbackQuery = supabase
-          .from('app_users')
-          .select('*')
-          .eq('role', 'student')
-          .eq('is_active', true)
-          .order('name', { ascending: true });
+      const { data: allAccessibleStudents, error: studentsError } = await studentQuery;
+      if (studentsError) throw studentsError;
 
-        if (currentUser.role !== 'admin') {
-          const schoolIds = await getTeacherSchoolIds(currentUser.id);
-          if (schoolIds.length > 0) {
-            fallbackQuery = fallbackQuery.in('school_id', schoolIds);
-          }
+      let studentsData = allAccessibleStudents || [];
+      
+      // If the test has a specific school, try to show only those students.
+      // If no students are in that school, show all accessible students as fallback.
+      if (testData.school_id) {
+        const schoolStudents = studentsData.filter(s => s.school_id === testData.school_id);
+        if (schoolStudents.length > 0) {
+          studentsData = schoolStudents;
         }
-
-        const { data, error } = await fallbackQuery;
-        if (error) throw error;
-        studentsData = data || [];
       }
 
       setStudents(studentsData);
@@ -172,13 +171,7 @@ export default function EnterMarks() {
             <Text style={styles.headerTitle} numberOfLines={1}>{test?.title}</Text>
             <Text style={styles.headerSub}>Enter Student Marks</Text>
           </View>
-          <TouchableOpacity onPress={handleSave} disabled={saving}>
-            {saving ? (
-              <ActivityIndicator size="small" color={Colors.primary} />
-            ) : (
-              <Text style={styles.saveText}>Save</Text>
-            )}
-          </TouchableOpacity>
+          <View style={{ width: 24 }} />
         </View>
 
         <View style={styles.searchContainer}>
@@ -266,11 +259,6 @@ const styles = StyleSheet.create({
   headerSub: {
     fontSize: 12,
     color: Colors.text.secondary,
-  },
-  saveText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: Colors.primary,
   },
   searchContainer: {
     padding: Spacing.lg,
