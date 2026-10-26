@@ -26,6 +26,7 @@ export default function TeacherDashboard() {
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<any>({});
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [recentTests, setRecentTests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -44,6 +45,7 @@ export default function TeacherDashboard() {
       setUser(dashboardData.user);
       setStats(dashboardData.stats || {});
       setAssignments(dashboardData.assignments || []);
+      setRecentTests(dashboardData.recentTests || []);
       
     } catch (error) {
       console.error('Load data error:', error);
@@ -52,6 +54,7 @@ export default function TeacherDashboard() {
       // Set safe fallback data
       setStats({});
       setAssignments([]);
+      setRecentTests([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -214,6 +217,40 @@ export default function TeacherDashboard() {
           </View>
         </Card>
 
+        {/* Recent Tests */}
+        {recentTests.length > 0 && (
+          <Card style={styles.classesCard}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Tests</Text>
+              <TouchableOpacity onPress={() => router.push('/test-scores')}>
+                <Text style={styles.seeAllText}>Manage All</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {recentTests.map((test) => (
+              <TouchableOpacity
+                key={test.id}
+                style={styles.classItem}
+                onPress={() => router.push(`/enter-marks?testId=${test.id}`)}
+              >
+                <View style={[styles.classIcon, { backgroundColor: Colors.success }]}>
+                  <Ionicons name="stats-chart" size={20} color={Colors.text.inverse} />
+                </View>
+                <View style={styles.classInfo}>
+                  <Text style={styles.className}>{test.title}</Text>
+                  <Text style={styles.classDescription}>
+                    Test Date: {new Date(test.test_date).toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.classStudents}>
+                    Max Score: {test.max_score}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.text.secondary} />
+              </TouchableOpacity>
+            ))}
+          </Card>
+        )}
+
         {/* School Assignments */}
         <Card style={styles.classesCard}>
           <View style={styles.sectionHeader}>
@@ -251,6 +288,7 @@ export default function TeacherDashboard() {
             ))
           )}
         </Card>
+
 
 
         </ScrollView>
@@ -310,7 +348,7 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     paddingBottom: Spacing.md,
@@ -318,7 +356,7 @@ const styles = StyleSheet.create({
   },
   statsGridWide: {
     flexWrap: 'nowrap',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
   },
   statCardTouchable: {
     width: '47%',

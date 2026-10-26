@@ -5,6 +5,7 @@ export interface DashboardData {
   user: any;
   stats: any;
   assignments?: any[];
+  recentTests?: any[];
   error?: string;
 }
 
@@ -18,6 +19,10 @@ export async function loadTeacherDashboard(): Promise<DashboardData> {
     if (user.role !== 'teacher') {
       return { user, stats: {}, error: 'User is not a teacher' };
     }
+
+    // Import supabase for direct queries
+    const { supabase } = await import('./supabase');
+    const { getTeacherSchoolIds } = await import('./database');
 
     // Load all school-wide assignments for the teacher (same source as the
     // "School Assignments" screen so the dashboard count always matches it).
@@ -42,7 +47,24 @@ export async function loadTeacherDashboard(): Promise<DashboardData> {
 
     const assignments = allAssignments.slice(0, 3);
 
-    return { user, stats, assignments };
+    // Load recent tests (only if SQL has been run)
+    let recentTests: any[] = [];
+    try {
+      const schoolIds = await getTeacherSchoolIds(user.id);
+      if (schoolIds.length > 0) {
+        const { data: testsData } = await supabase
+          .from('tests')
+          .select('*')
+          .in('school_id', schoolIds)
+          .order('test_date', { ascending: false })
+          .limit(3);
+        recentTests = testsData || [];
+      }
+    } catch (error) {
+      // Fail silently if table doesn't exist yet
+    }
+
+    return { user, stats, assignments, recentTests };
   } catch (error) {
     console.error('Teacher dashboard error:', error);
     return { 
@@ -134,7 +156,21 @@ export async function loadStudentDashboard(): Promise<DashboardData> {
       console.error('Failed to load assignments:', error);
     }
 
-    return { user, stats, assignments };
+    // Load recent test results
+    let recentTests: any[] = [];
+    try {
+      const { data: testsData } = await supabase
+        .from('student_test_results')
+        .select('*')
+        .eq('student_id', user.id)
+        .order('test_date', { ascending: false })
+        .limit(3);
+      recentTests = testsData || [];
+    } catch (error) {
+      console.error('Failed to load recent tests:', error);
+    }
+
+    return { user, stats, assignments, recentTests };
   } catch (error) {
     console.error('Student dashboard error:', error);
     return { 

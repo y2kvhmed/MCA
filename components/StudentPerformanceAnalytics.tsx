@@ -1360,7 +1360,7 @@ export default function StudentPerformanceAnalytics({
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingId ? 'Edit Test Result' : 'Upload Test Result'}
+                {editingId ? 'Edit Test Marks' : 'Add Test Marks'}
               </Text>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
                 <Ionicons name="close" size={24} color={Colors.text.secondary} />
@@ -1447,7 +1447,7 @@ export default function StudentPerformanceAnalytics({
                 style={{ flex: 1, marginRight: 8 }}
               />
               <Button
-                title={savingTest ? 'Saving...' : editingId ? 'Update Result' : 'Upload Result'}
+                title={savingTest ? 'Saving...' : editingId ? 'Update Marks' : 'Add Marks'}
                 onPress={handleSaveTestResult}
                 disabled={savingTest}
                 style={{ flex: 1, marginLeft: 8 }}
