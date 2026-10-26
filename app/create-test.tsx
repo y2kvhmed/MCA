@@ -86,21 +86,9 @@ export default function CreateTest() {
 
       if (error) throw error;
 
-      Alert.alert(
-        'Success',
-        'Test created successfully! Would you like to enter marks now?',
-        [
-          {
-            text: 'Later',
-            onPress: () => router.back(),
-            style: 'cancel',
-          },
-          {
-            text: 'Enter Marks',
-            onPress: () => router.replace(`/enter-marks?testId=${data.id}`),
-          },
-        ]
-      );
+      // Go straight to the student list so marks can be entered right away.
+      // (Alert button callbacks are not supported on web, so we never route through one.)
+      router.replace(`/enter-marks?testId=${data.id}`);
     } catch (error) {
       handleError(error, 'Failed to create test');
     } finally {

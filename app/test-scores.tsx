@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { getTeacherSchools, getTestsByTeacherSchools, deleteTest } from '../lib/database';
@@ -34,9 +34,13 @@ export default function TestScores() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Reload on focus so newly created tests (and their marks) appear immediately
+  // when returning from the marks screen.
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
 
   const loadData = async () => {
     try {
@@ -82,28 +86,36 @@ export default function TestScores() {
     loadData();
   };
 
-  const handleDeleteTest = (test: any) => {
-    Alert.alert(
-      'Delete Test',
-      `Are you sure you want to delete "${test.title}"? All student marks for this test will be permanently removed.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const { success } = await deleteTest(test.id);
-              if (success) {
-                setTests(prev => prev.filter(t => t.id !== test.id));
-              }
-            } catch (error) {
-              handleError(error, 'Failed to delete test');
-            }
-          }
-        }
-      ]
-    );
+  const handleDeleteTest = async (test: any) => {
+    const message = `Delete "${test.title}"? All student marks for this test will be permanently removed.`;
+
+    // Alert button callbacks are ignored on web, so a native Alert can never confirm.
+    let confirmed = false;
+    if (typeof window !== 'undefined') {
+      confirmed = window.confirm(message);
+    } else {
+      confirmed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          'Delete Test',
+          message,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Delete', style: 'destructive', onPress: () => resolve(true) },
+          ],
+          { onDismiss: () => resolve(false) }
+        );
+      });
+    }
+
+    if (!confirmed) return;
+
+    try {
+      const { error } = await deleteTest(test.id);
+      if (error) throw new Error(error);
+      setTests(prev => prev.filter(t => t.id !== test.id));
+    } catch (error) {
+      handleError(error, 'Failed to delete test');
+    }
   };
 
   const filteredStudents = useMemo(() => {
@@ -220,10 +232,11 @@ export default function TestScores() {
                       </View>
                       <View style={styles.testActions}>
                         <TouchableOpacity
-                          style={styles.actionBtn}
+                          style={styles.enterMarksBtn}
                           onPress={() => router.push(`/enter-marks?testId=${test.id}`)}
                         >
-                          <Ionicons name="create" size={22} color={Colors.primary} />
+                          <Ionicons name="create" size={16} color={Colors.text.inverse} />
+                          <Text style={styles.enterMarksText}>Marks</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={styles.actionBtn}
@@ -369,7 +382,22 @@ const styles = StyleSheet.create({
   },
   testActions: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.md,
+  },
+  enterMarksBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  enterMarksText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.text.inverse,
   },
   actionBtn: {
     padding: 4,

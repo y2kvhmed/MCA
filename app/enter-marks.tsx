@@ -118,10 +118,9 @@ export default function EnterMarks() {
     try {
       const { error } = await saveBulkTestResults(resultsToSave);
       if (error) throw error;
-      
-      Alert.alert('Success', 'Marks saved successfully!', [
-        { text: 'OK', onPress: () => router.back() }
-      ]);
+
+      // Alert button callbacks are not supported on web, so navigate back directly.
+      router.back();
     } catch (error) {
       handleError(error, 'Failed to save marks');
     } finally {
