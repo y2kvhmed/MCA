@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +16,8 @@ import { Spacing } from '../../constants/Styles';
 
 export default function AdminDashboard() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width > 768;
 
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState({
@@ -90,8 +92,8 @@ export default function AdminDashboard() {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           >
             {/* Stats Grid */}
-            <View style={styles.statsGrid}>
-              <AnimatedCard style={styles.statCard} delay={100}>
+            <View style={[styles.statsGrid, isWide && styles.statsGridWide]}>
+              <AnimatedCard style={[styles.statCard, isWide && styles.statCardWide]} delay={100}>
                 <View style={[styles.statIcon, { backgroundColor: Colors.info + '20' }]}>
                   <Ionicons name="library" size={24} color={Colors.info} />
                 </View>
@@ -99,7 +101,7 @@ export default function AdminDashboard() {
                 <Text style={styles.statLabel}>Schools</Text>
               </AnimatedCard>
 
-              <AnimatedCard style={styles.statCard} delay={150}>
+              <AnimatedCard style={[styles.statCard, isWide && styles.statCardWide]} delay={150}>
                 <View style={[styles.statIcon, { backgroundColor: Colors.success + '20' }]}>
                   <Ionicons name="people" size={24} color={Colors.success} />
                 </View>
@@ -107,7 +109,7 @@ export default function AdminDashboard() {
                 <Text style={styles.statLabel}>Users</Text>
               </AnimatedCard>
 
-              <AnimatedCard style={styles.statCard} delay={200}>
+              <AnimatedCard style={[styles.statCard, isWide && styles.statCardWide]} delay={200}>
                 <View style={[styles.statIcon, { backgroundColor: Colors.warning + '20' }]}>
                   <Ionicons name="document-text" size={24} color={Colors.warning} />
                 </View>
@@ -115,7 +117,7 @@ export default function AdminDashboard() {
                 <Text style={styles.statLabel}>Assignments</Text>
               </AnimatedCard>
 
-              <AnimatedCard style={styles.statCard} delay={250}>
+              <AnimatedCard style={[styles.statCard, isWide && styles.statCardWide]} delay={250}>
                 <View style={[styles.statIcon, { backgroundColor: Colors.primary + '20' }]}>
                   <Ionicons name="school" size={24} color={Colors.primary} />
                 </View>
@@ -233,9 +235,13 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     marginBottom: Spacing.lg,
     gap: Spacing.md,
+  },
+  statsGridWide: {
+    flexWrap: 'nowrap',
+    justifyContent: 'flex-start',
   },
   statCard: {
     width: '47%',
@@ -243,6 +249,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.xl,
     marginBottom: Spacing.sm,
+  },
+  statCardWide: {
+    width: '23%',
+    flex: 1,
+    maxWidth: 250,
   },
   statIcon: {
     width: 48,

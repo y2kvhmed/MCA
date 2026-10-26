@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +20,8 @@ import { Spacing } from '../../constants/Styles';
 
 export default function TeacherDashboard() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width > 768;
   const { unreadCount } = useNotifications();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<any>({});
@@ -84,9 +86,9 @@ export default function TeacherDashboard() {
         </FadeInView>
 
         {/* Stats Grid */}
-        <View style={styles.statsGrid}>
+        <View style={[styles.statsGrid, isWide && styles.statsGridWide]}>
           <TouchableOpacity
-            style={styles.statCardTouchable}
+            style={[styles.statCardTouchable, isWide && styles.statCardWide]}
             activeOpacity={0.8}
             onPress={() => router.push('/teacher-assignments')}
           >
@@ -100,7 +102,7 @@ export default function TeacherDashboard() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.statCardTouchable}
+            style={[styles.statCardTouchable, isWide && styles.statCardWide]}
             activeOpacity={0.8}
             onPress={() => router.push('/materials-list')}
           >
@@ -114,7 +116,7 @@ export default function TeacherDashboard() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.statCardTouchable}
+            style={[styles.statCardTouchable, isWide && styles.statCardWide]}
             activeOpacity={0.8}
             onPress={() => router.push('/students-list')}
           >
@@ -128,7 +130,7 @@ export default function TeacherDashboard() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.statCardTouchable}
+            style={[styles.statCardTouchable, isWide && styles.statCardWide]}
             activeOpacity={0.8}
             onPress={() => router.push('/test-scores')}
           >
@@ -308,14 +310,23 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     paddingBottom: Spacing.md,
     gap: Spacing.md,
   },
+  statsGridWide: {
+    flexWrap: 'nowrap',
+    justifyContent: 'flex-start',
+  },
   statCardTouchable: {
     width: '47%',
+  },
+  statCardWide: {
+    width: '23%',
+    flex: 1,
+    maxWidth: 250,
   },
   statCard: {
     alignItems: 'center',

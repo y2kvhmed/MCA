@@ -2024,6 +2024,159 @@ export async function getParentConversations(teacherId: string) {
 }
 
 // ============================================================================
+// TESTS & BULK MARK ENTRY
+// ============================================================================
+
+export async function createTest(testData: {
+  title: string;
+  description?: string;
+  test_date: string;
+  max_score: number;
+  school_id: string;
+  created_by: string;
+}) {
+  try {
+    const { data, error } = await supabase
+      .from('tests')
+      .insert([testData])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error) {
+    return handleDBError('createTest', error);
+  }
+}
+
+export async function getTestsBySchool(schoolId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('tests')
+      .select('*')
+      .eq('school_id', schoolId)
+      .order('test_date', { ascending: false });
+
+    return { data: data || [], error };
+  } catch (error) {
+    console.error('getTestsBySchool error:', error);
+    return { data: [], error: null };
+  }
+}
+
+export async function getTestsByTeacherSchools(teacherId: string) {
+  try {
+    const schoolIds = await getTeacherSchoolIds(teacherId);
+    if (schoolIds.length === 0) return { data: [], error: null };
+
+    const { data, error } = await supabase
+      .from('tests')
+      .select('*')
+      .in('school_id', schoolIds)
+      .order('test_date', { ascending: false });
+
+    return { data: data || [], error };
+  } catch (error) {
+    console.error('getTestsByTeacherSchools error:', error);
+    return { data: [], error: null };
+  }
+}
+
+export async function getTestById(id: string) {
+  try {
+    const { data, error } = await supabase
+      .from('tests')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    return { data, error };
+  } catch (error) {
+    return handleDBError('getTestById', error);
+  }
+}
+
+export async function updateTest(id: string, updates: Partial<{
+  title: string;
+  description: string;
+  test_date: string;
+  max_score: number;
+}>) {
+  try {
+    const { data, error } = await supabase
+      .from('tests')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error) {
+    return handleDBError('updateTest', error);
+  }
+}
+
+export async function deleteTest(id: string) {
+  try {
+    const { error } = await supabase
+      .from('tests')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    return { success: true, error: null };
+  } catch (error) {
+    return handleDBError('deleteTest', error);
+  }
+}
+
+export async function getTestResultsByTestId(testId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('student_test_results')
+      .select('*, student:app_users!student_test_results_student_id_fkey(id, name, email)')
+      .eq('test_id', testId);
+
+    return { data: data || [], error };
+  } catch (error) {
+    console.error('getTestResultsByTestId error:', error);
+    return { data: [], error: null };
+  }
+}
+
+export async function saveBulkTestResults(results: Array<{
+  test_id: string;
+  student_id: string;
+  teacher_id: string;
+  school_id: string;
+  title: string;
+  test_date: string;
+  score: number;
+  max_score: number;
+  notes?: string;
+}>) {
+  try {
+    // 1. Delete existing results for this test if any (to avoid duplicates on re-save)
+    // Actually, it's better to use upsert if we had a unique constraint, 
+    // but a simple approach is to insert/update based on student_id + test_id.
+    
+    const { data, error } = await supabase
+      .from('student_test_results')
+      .upsert(results, { 
+        onConflict: 'student_id,test_id',
+        ignoreDuplicates: false 
+      })
+      .select();
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error) {
+    return handleDBError('saveBulkTestResults', error);
+  }
+}
+
+// ============================================================================
 // STUDENT TEST RESULTS & DETAILED ACADEMIC ANALYTICS
 // ============================================================================
 
