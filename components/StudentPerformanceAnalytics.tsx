@@ -110,6 +110,18 @@ export default function StudentPerformanceAnalytics({
   // Responsive Chart width
   const [chartWidth, setChartWidth] = useState(360);
 
+  const toLocalDateKey = (value?: string | null): string => {
+    if (!value) return '';
+    // Date-only strings (YYYY-MM-DD) are already correct; return as-is.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return String(value).slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
   useEffect(() => {
     if (student?.id) {
       loadData();
@@ -161,8 +173,14 @@ export default function StudentPerformanceAnalytics({
   // 1. FILTERED TEST RESULTS
   const filteredTests = useMemo(() => {
     if (!testResults || testResults.length === 0) return [];
-    if (!cutoffDate) return testResults;
-    return testResults.filter((t) => new Date(t.test_date) >= cutoffDate);
+    // Sort chronological: oldest to newest so trends read left-to-right
+    const sorted = [...testResults].sort((a, b) => {
+      const da = new Date(a.test_date).getTime() || 0;
+      const db = new Date(b.test_date).getTime() || 0;
+      return da - db;
+    });
+    if (!cutoffDate) return sorted;
+    return sorted.filter((t) => new Date(t.test_date) >= cutoffDate);
   }, [testResults, cutoffDate]);
 
   const testStats = useMemo(() => {
@@ -217,13 +235,9 @@ export default function StudentPerformanceAnalytics({
       const grade = sub && sub.grade !== null && sub.grade !== undefined ? Number(sub.grade) : null;
       const maxScore = Number(assignment.max_score) || 100;
       const pct = grade !== null ? Math.round((grade / maxScore) * 100) : isSubmitted ? 100 : 0;
-      const date = sub?.submitted_at
-        ? sub.submitted_at.split('T')[0]
-        : assignment.due_date
-        ? assignment.due_date.split('T')[0]
-        : assignment.created_at
-        ? assignment.created_at.split('T')[0]
-        : '2026-01-01';
+      const timestamp = sub?.submitted_at || assignment.due_date || assignment.created_at || null;
+      const date = timestamp ? toLocalDateKey(timestamp) : '2026-01-01';
+      const sortKey = timestamp ? new Date(timestamp).getTime() || 0 : 0;
 
       return {
         id: assignment.id,
@@ -235,12 +249,13 @@ export default function StudentPerformanceAnalytics({
         grade,
         maxScore,
         pct,
+        sortKey,
         feedback: sub?.feedback || '',
       };
     });
 
-    // Sort chronological
-    const sorted = mapped.sort((a, b) => a.date.localeCompare(b.date));
+    // Sort chronological by the real timestamp (not the truncated date string)
+    const sorted = mapped.sort((a, b) => a.sortKey - b.sortKey);
     if (!cutoffDate) return sorted;
     return sorted.filter((item) => new Date(item.date) >= cutoffDate);
   }, [assignments, submissions, cutoffDate]);
@@ -283,13 +298,19 @@ export default function StudentPerformanceAnalytics({
           : paddingLeft + (index / (filteredTests.length - 1)) * innerWidth;
       const y = paddingTop + innerHeight - (pct / 100) * innerHeight;
 
+      let trend: 'improvement' | 'decrease' | 'drop' | 'first' = 'first';
       let isDrop = false;
       let dropDiff = 0;
       if (index > 0) {
         const prevPct = Number(filteredTests[index - 1].percentage) || 0;
-        if (pct < prevPct && prevPct - pct >= 8) {
+        if (pct > prevPct) {
+          trend = 'improvement';
+        } else if (prevPct - pct >= 8) {
+          trend = 'drop';
           isDrop = true;
           dropDiff = Math.round(prevPct - pct);
+        } else {
+          trend = 'decrease';
         }
       }
 
@@ -298,6 +319,7 @@ export default function StudentPerformanceAnalytics({
         x,
         y,
         pct,
+        trend,
         isDrop,
         dropDiff,
         index,
@@ -602,7 +624,16 @@ export default function StudentPerformanceAnalytics({
       const csvData: any[] = [];
 
       // Add Test Results Rows
-      filteredTests.forEach((t) => {
+      filteredTests.forEach((t, idx) => {
+        let trendStatus = '—';
+        if (idx > 0) {
+          const currPct = Number(t.percentage) || 0;
+          const prevPct = Number(filteredTests[idx - 1].percentage) || 0;
+          if (currPct > prevPct) trendStatus = 'Improvement';
+          else if (prevPct - currPct >= 8) trendStatus = 'Drop';
+          else trendStatus = 'Decrease';
+        }
+
         csvData.push({
           'Record Type': 'Test Result',
           'Student Name': student.name,
@@ -613,7 +644,7 @@ export default function StudentPerformanceAnalytics({
           'Date': t.test_date,
           'Score / Metric': `${t.score}/${t.max_score}`,
           'Percentage': `${Math.round(t.percentage)}%`,
-          'Status': t.percentage >= 85 ? 'Mastery' : t.percentage < 60 ? 'Needs Support' : 'Standard',
+          'Status': trendStatus,
           'Notes / Feedback': t.notes || '',
           'Attachment Link': t.pdf_url || '',
         });
@@ -1073,7 +1104,14 @@ export default function StudentPerformanceAnalytics({
                 let pointColor = activeStrokeColor;
 
                 if (activeTab === 'tests') {
-                  pointColor = pt.isDrop ? Colors.error : pt.pct >= 85 ? Colors.success : Colors.primary;
+                  pointColor =
+                    pt.trend === 'improvement'
+                      ? Colors.success
+                      : pt.trend === 'decrease'
+                      ? Colors.warning
+                      : pt.trend === 'drop'
+                      ? Colors.error
+                      : Colors.primary;
                 } else if (activeTab === 'attendance') {
                   pointColor = pt.isAbsent
                     ? Colors.error
@@ -1083,7 +1121,7 @@ export default function StudentPerformanceAnalytics({
                     ? Colors.warning
                     : Colors.success;
                 } else if (activeTab === 'submissions') {
-                  pointColor = !pt.isSubmitted ? Colors.error : pt.pct >= 85 ? Colors.success : Colors.info;
+                  pointColor = pt.isSubmitted ? Colors.success : Colors.error;
                 }
 
                 return (
@@ -1160,15 +1198,15 @@ export default function StudentPerformanceAnalytics({
             <>
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
-                <Text style={styles.legendText}>High / Mastery (≥85%)</Text>
+                <Text style={styles.legendText}>Improvement</Text>
               </View>
               <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: Colors.primary }]} />
-                <Text style={styles.legendText}>Standard Score</Text>
+                <View style={[styles.legendDot, { backgroundColor: Colors.warning }]} />
+                <Text style={styles.legendText}>Decrease</Text>
               </View>
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: Colors.error }]} />
-                <Text style={styles.legendText}>Grade Drop Point</Text>
+                <Text style={styles.legendText}>Drop</Text>
               </View>
             </>
           )}
@@ -1198,15 +1236,11 @@ export default function StudentPerformanceAnalytics({
             <>
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
-                <Text style={styles.legendText}>Submitted / Mastered</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: Colors.info }]} />
-                <Text style={styles.legendText}>Standard Submission</Text>
+                <Text style={styles.legendText}>Submitted</Text>
               </View>
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: Colors.error }]} />
-                <Text style={styles.legendText}>Missing Assignment</Text>
+                <Text style={styles.legendText}>Not submitted</Text>
               </View>
             </>
           )}
@@ -1227,18 +1261,33 @@ export default function StudentPerformanceAnalytics({
         ) : (
           <View style={styles.testsList}>
             {filteredTests.map((t, idx) => {
-              const isDrop = t.percentage < 60;
-              const isExcellent = t.percentage >= 85;
-              const badgeBg = isExcellent
-                ? Colors.success + '20'
-                : isDrop
-                ? Colors.error + '20'
-                : Colors.info + '20';
-              const badgeColor = isExcellent
-                ? Colors.success
-                : isDrop
-                ? Colors.error
-                : Colors.info;
+              const currPct = Number(t.percentage) || 0;
+              const prevPct = idx > 0 ? Number(filteredTests[idx - 1].percentage) || 0 : null;
+              const trend =
+                prevPct === null
+                  ? 'first'
+                  : currPct > prevPct
+                  ? 'improvement'
+                  : prevPct - currPct >= 8
+                  ? 'drop'
+                  : 'decrease';
+              const badgeColor =
+                trend === 'improvement'
+                  ? Colors.success
+                  : trend === 'decrease'
+                  ? Colors.warning
+                  : trend === 'drop'
+                  ? Colors.error
+                  : Colors.info;
+              const badgeLabel =
+                trend === 'improvement'
+                  ? 'Improvement'
+                  : trend === 'decrease'
+                  ? 'Decrease'
+                  : trend === 'drop'
+                  ? 'Drop'
+                  : '—';
+              const badgeBg = badgeColor + '20';
 
               return (
                 <View key={t.id || idx} style={styles.testItem}>
@@ -1247,7 +1296,7 @@ export default function StudentPerformanceAnalytics({
                       <Text style={styles.testItemTitle}>{t.title}</Text>
                       <View style={[styles.badge, { backgroundColor: badgeBg }]}>
                         <Text style={[styles.badgeText, { color: badgeColor }]}>
-                          {t.score}/{t.max_score} ({Math.round(t.percentage)}%)
+                          {badgeLabel}
                         </Text>
                       </View>
                     </View>
