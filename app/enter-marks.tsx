@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
-import { getTestById, saveBulkTestResults, getTestResultsByTestId, supabase } from '../lib/database';
+import { getTestById, saveBulkTestResults, getTestResultsByTestId, getTeacherSchoolIds, supabase } from '../lib/database';
 import { handleError } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -44,17 +44,42 @@ export default function EnterMarks() {
       if (testError) throw testError;
       setTest(testData);
 
-      // 2. Get Students in the school
-      const { data: studentsData, error: studentsError } = await supabase
-        .from('app_users')
-        .select('*')
-        .eq('school_id', testData.school_id)
-        .eq('role', 'student')
-        .eq('is_active', true)
-        .order('name', { ascending: true });
+      // 2. Get Students — scoped to the test's school, falling back to the teacher's
+      // schools (or every student for admins) so the list is never wrongly empty.
+      let studentsData: any[] | null = null;
 
-      if (studentsError) throw studentsError;
-      setStudents(studentsData || []);
+      if (testData.school_id) {
+        const { data } = await supabase
+          .from('app_users')
+          .select('*')
+          .eq('school_id', testData.school_id)
+          .eq('role', 'student')
+          .eq('is_active', true)
+          .order('name', { ascending: true });
+        studentsData = data;
+      }
+
+      if (!studentsData || studentsData.length === 0) {
+        let fallbackQuery = supabase
+          .from('app_users')
+          .select('*')
+          .eq('role', 'student')
+          .eq('is_active', true)
+          .order('name', { ascending: true });
+
+        if (currentUser.role !== 'admin') {
+          const schoolIds = await getTeacherSchoolIds(currentUser.id);
+          if (schoolIds.length > 0) {
+            fallbackQuery = fallbackQuery.in('school_id', schoolIds);
+          }
+        }
+
+        const { data, error } = await fallbackQuery;
+        if (error) throw error;
+        studentsData = data || [];
+      }
+
+      setStudents(studentsData);
 
       // 3. Get Existing Results
       const { data: existingResults } = await getTestResultsByTestId(testId);
