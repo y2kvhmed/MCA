@@ -235,13 +235,13 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     marginBottom: Spacing.lg,
     gap: Spacing.md,
   },
   statsGridWide: {
     flexWrap: 'nowrap',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
   },
   statCard: {
     width: '47%',

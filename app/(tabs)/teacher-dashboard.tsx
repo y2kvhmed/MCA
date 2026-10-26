@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     paddingBottom: Spacing.md,
@@ -356,7 +356,7 @@ const styles = StyleSheet.create({
   },
   statsGridWide: {
     flexWrap: 'nowrap',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
   },
   statCardTouchable: {
     width: '47%',
