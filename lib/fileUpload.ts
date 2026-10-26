@@ -41,13 +41,14 @@ export function validateFile(file: any): { isValid: boolean; error?: string } {
 
   const name = file.name || file.fileName || '';
   const ext = name.split('.').pop()?.toLowerCase();
-  const isMimeAllowed = FILE_CONFIG.allowedTypes.includes(file.mimeType || file.type);
+  const rawType = file.mimeType || file.type || 'unknown';
+  const isMimeAllowed = FILE_CONFIG.allowedTypes.includes(rawType);
   const isExtAllowed = ext && FILE_CONFIG.allowedExtensions.includes(ext);
 
   if (!isMimeAllowed && !isExtAllowed) {
     return { 
       isValid: false, 
-      error: 'File type not allowed. Please upload a PDF, Word document, or image file.' 
+      error: `File type not allowed (name: "${name}", type: "${rawType}"). Allowed: ${FILE_CONFIG.allowedExtensions.join(', ')}.` 
     };
   }
 
@@ -273,21 +274,36 @@ export async function pickAssignmentFile(): Promise<{ success: boolean; file?: a
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = FILE_CONFIG.allowedTypes.join(',');
-        
+        let settled = false;
+
+        const finish = (result: { success: boolean; file?: any; error?: string }) => {
+          if (settled) return;
+          settled = true;
+          window.removeEventListener('focus', onWindowFocus);
+          resolve(result);
+        };
+
+        // Safari/iOS does not fire `change` when the picker is dismissed, which left the
+        // UI silently stuck. Detect the dialog closing and surface a real error instead.
+        const onWindowFocus = () => {
+          setTimeout(() => finish({ success: false, error: 'No file was selected (picker closed)' }), 1000);
+        };
+
         input.onchange = (event: any) => {
-          const file = event.target.files[0];
-          if (file) {
-            const validation = validateFile(file);
-            if (validation.isValid) {
-              resolve({ success: true, file });
-            } else {
-              resolve({ success: false, error: validation.error });
-            }
+          const file = event.target.files && event.target.files[0];
+          if (!file) {
+            finish({ success: false, error: 'No file was selected' });
+            return;
+          }
+          const validation = validateFile(file);
+          if (validation.isValid) {
+            finish({ success: true, file });
           } else {
-            resolve({ success: false, error: 'No file selected' });
+            finish({ success: false, error: validation.error });
           }
         };
-        
+
+        window.addEventListener('focus', onWindowFocus);
         input.click();
       });
     } else {
@@ -302,7 +318,10 @@ export async function pickAssignmentFile(): Promise<{ success: boolean; file?: a
         return { success: false, error: 'File selection cancelled' };
       }
 
-      const file = result.assets[0];
+      const file = result.assets && result.assets[0];
+      if (!file) {
+        return { success: false, error: 'Picker returned no file asset' };
+      }
       const validation = validateFile(file);
       
       if (!validation.isValid) {
@@ -311,9 +330,9 @@ export async function pickAssignmentFile(): Promise<{ success: boolean; file?: a
 
       return { success: true, file };
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('File picker error:', error);
-    return { success: false, error: 'Failed to pick file' };
+    return { success: false, error: `Failed to pick file: ${error?.message || String(error)}` };
   }
 }
 
