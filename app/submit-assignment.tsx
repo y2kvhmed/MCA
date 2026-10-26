@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { File as LocalFile } from 'expo-file-system';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { pickAssignmentFile } from '../lib/fileUpload';
@@ -161,8 +162,9 @@ export default function SubmitAssignment() {
           uploadPayload = selectedFile;
         }
       } else {
-        const response = await fetch(selectedFile.uri);
-        uploadPayload = await response.blob();
+        // React Native's fetch cannot read `file://` URIs, so read the picked file's
+        // bytes straight off disk instead — this is why mobile uploads were failing.
+        uploadPayload = await new LocalFile(selectedFile.uri).arrayBuffer();
       }
       
       const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';

@@ -1,7 +1,6 @@
 import { supabase } from './supabase';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
-import { decode } from 'base64-arraybuffer';
+import { File as LocalFile } from 'expo-file-system';
 
 // File upload configuration
 export const FILE_CONFIG = {
@@ -86,11 +85,8 @@ export async function uploadFileToSupabase(
       // Web: file is already a File object
       fileData = await file.arrayBuffer();
     } else {
-      // Mobile: read file using FileSystem
-      const base64 = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: 'base64',
-      });
-      fileData = decode(base64);
+      // Mobile: React Native cannot read `file://` URIs through fetch, so read the bytes off disk.
+      fileData = await new LocalFile(file.uri).arrayBuffer();
     }
 
     const { data, error } = await supabase.storage
