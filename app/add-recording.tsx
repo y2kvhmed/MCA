@@ -10,6 +10,7 @@ import { handleError, showSuccess, formatFileSize } from '../lib/utils';
 import { extractGoogleDriveId } from '../lib/videoStream';
 import Input from '../components/Input';
 import Button from '../components/Button';
+import DateTimePicker from '../components/DateTimePicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
@@ -30,6 +31,9 @@ export default function AddRecording() {
   const [description, setDescription] = useState('');
   const [durationMinutes, setDurationMinutes] = useState<number | null>(45);
   const [durationStatus, setDurationStatus] = useState<string>('');
+
+  // Optional expiry date (null = never expires)
+  const [expiresAt, setExpiresAt] = useState<Date | null>(null);
 
   // Uploaded video state
   const [uploadedVideo, setUploadedVideo] = useState<{
@@ -278,6 +282,7 @@ export default function AddRecording() {
         duration_minutes: finalDuration,
         duration: finalDuration * 60,
         is_published: true,
+        expires_at: expiresAt ? expiresAt.toISOString() : null,
       };
 
       console.log('Inserting lesson recording:', recordingData);
@@ -499,6 +504,19 @@ export default function AddRecording() {
             ) : null}
           </View>
         )}
+
+        {/* Optional Expiry Date */}
+        <View style={styles.expirySection}>
+          <DateTimePicker
+            label="Expiry Date (Optional)"
+            value={expiresAt}
+            onChange={setExpiresAt}
+          />
+          <Text style={styles.expiryHint}>
+            Leave empty so the recording never expires. On the chosen date it will
+            disappear for everyone.
+          </Text>
+        </View>
 
         <Button
           title={saving ? "Saving Recording..." : "Post Recording"}
@@ -788,5 +806,15 @@ const styles = StyleSheet.create({
   },
   submitBtn: {
     marginBottom: Spacing.xxxl,
+  },
+  expirySection: {
+    marginTop: Spacing.xs,
+  },
+  expiryHint: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    lineHeight: 18,
+    marginTop: -Spacing.sm,
+    marginBottom: Spacing.lg,
   },
 });

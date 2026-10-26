@@ -703,6 +703,7 @@ export async function createLesson(lesson: {
   scheduled_at?: string;
   school_id?: string | null;
   is_published?: boolean;
+  expires_at?: string | null;
 }) {
   console.log('[DB] createLesson called with:', lesson);
 
@@ -719,6 +720,7 @@ export async function createLesson(lesson: {
   if (lesson.school_id !== undefined) lessonData.school_id = lesson.school_id;
   if (lesson.class_id !== undefined) lessonData.class_id = lesson.class_id;
   if (lesson.is_published !== undefined) lessonData.is_published = lesson.is_published;
+  if (lesson.expires_at !== undefined) lessonData.expires_at = lesson.expires_at;
 
   console.log('[DB] Inserting lesson data:', lessonData);
 
@@ -734,6 +736,8 @@ export async function createLesson(lesson: {
 }
 
 export async function getLessonsByClass(classId: string) {
+  // Exclude expired recordings (expires_at NULL = never expires)
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from('lessons')
     .select(`
@@ -743,6 +747,7 @@ export async function getLessonsByClass(classId: string) {
     `)
     .eq('class_id', classId)
     .is('deleted_at', null)
+    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
     .order('created_at', { ascending: false });
 
   return { data, error };
@@ -751,6 +756,10 @@ export async function getLessonsByClass(classId: string) {
 export async function getLessonsBySchool(schoolId: string) {
   // Get lessons for this school OR global lessons (where school_id is null)
   // Don't filter by is_published to ensure existing recordings remain visible
+  // Exclude expired recordings (expires_at NULL = never expires). PostgREST only
+  // supports one top-level `or`, so the school + expiry conditions are combined
+  // into a single grouped `or` here.
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from('lessons')
     .select(`
@@ -759,7 +768,10 @@ export async function getLessonsBySchool(schoolId: string) {
       school:schools(id, name),
       teacher:app_users!lessons_teacher_id_fkey(id, name)
     `)
-    .or(`school_id.eq.${schoolId},school_id.is.null`)
+    .or(
+      `and(school_id.eq.${schoolId},or(expires_at.is.null,expires_at.gt.${nowIso})),` +
+      `and(school_id.is.null,or(expires_at.is.null,expires_at.gt.${nowIso}))`
+    )
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
@@ -785,6 +797,7 @@ export async function getLessonsForStudent(studentId: string) {
 
     const classIds = enrollments.map((e: any) => e.class_id);
 
+    const nowIso = new Date().toISOString();
     const { data, error } = await supabase
       .from('lessons')
       .select(`
@@ -794,12 +807,17 @@ export async function getLessonsForStudent(studentId: string) {
       `)
       .in('class_id', classIds)
       .is('deleted_at', null)
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
       .order('created_at', { ascending: false });
 
     return { data, error };
   }
 
   // Get lessons by school
+  // Exclude expired recordings (expires_at NULL = never expires). PostgREST only
+  // supports one top-level `or`, so the school + expiry conditions are combined
+  // into a single grouped `or` here.
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from('lessons')
     .select(`
@@ -808,7 +826,10 @@ export async function getLessonsForStudent(studentId: string) {
       school:schools(id, name),
       teacher:app_users!lessons_teacher_id_fkey(id, name)
     `)
-    .or(`school_id.eq.${userData.school_id},school_id.is.null`)
+    .or(
+      `and(school_id.eq.${userData.school_id},or(expires_at.is.null,expires_at.gt.${nowIso})),` +
+      `and(school_id.is.null,or(expires_at.is.null,expires_at.gt.${nowIso}))`
+    )
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
@@ -827,6 +848,8 @@ export async function publishLesson(lessonId: string) {
 }
 
 export async function getAllLessons() {
+  // Exclude expired recordings (expires_at NULL = never expires)
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from('lessons')
     .select(`
@@ -834,6 +857,7 @@ export async function getAllLessons() {
       class:classes(id, name),
       teacher:app_users!lessons_teacher_id_fkey(id, name)
     `)
+    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
     .order('created_at', { ascending: false });
 
   return { data, error };
@@ -855,6 +879,7 @@ export async function updateLesson(lessonId: string, updates: {
   video_url?: string;
   duration_minutes?: number;
   last_edited_by?: string;
+  expires_at?: string | null;
 }) {
   const updateData = {
     ...updates,

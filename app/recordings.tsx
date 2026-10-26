@@ -22,6 +22,13 @@ import { useToast } from '../contexts/ToastContext';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
+// A recording is expired when its expiry date is set and has already passed.
+// NULL / empty expires_at means it never expires.
+const isExpired = (expiresAt?: string | null): boolean => {
+  if (!expiresAt) return false;
+  return new Date(expiresAt).getTime() <= Date.now();
+};
+
 export default function Recordings() {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
@@ -98,8 +105,16 @@ export default function Recordings() {
           }
         }
         
+        // Exclude expired recordings (the DB already filters these; kept here too
+        // so the screen stays resilient if it ever does its own querying).
+        const now = Date.now();
+        const activeLessons = (lessonsData || []).filter((lesson: any) => {
+          if (!lesson.expires_at) return true;
+          return new Date(lesson.expires_at).getTime() > now;
+        });
+
         // Filter for video lessons only (check both video_url and video_path)
-        const videoLessons = (lessonsData || []).filter((lesson: any) => 
+        const videoLessons = activeLessons.filter((lesson: any) => 
           (lesson.video_url && lesson.video_url.trim() !== '') || 
           (lesson.video_path && lesson.video_path.trim() !== '')
         );
@@ -269,6 +284,26 @@ export default function Recordings() {
                   <Text style={styles.recordingDescription}>{recording.description}</Text>
                 )}
 
+                {/* Expiry Information */}
+                {recording.expires_at && (
+                  <View style={styles.expiryRow}>
+                    <Ionicons
+                      name={isExpired(recording.expires_at) ? 'alert-circle' : 'time-outline'}
+                      size={14}
+                      color={isExpired(recording.expires_at) ? Colors.error : Colors.warning}
+                    />
+                    <Text
+                      style={[
+                        styles.expiryText,
+                        isExpired(recording.expires_at) && styles.expiryTextExpired,
+                      ]}
+                    >
+                      {isExpired(recording.expires_at) ? 'Expired' : 'Expires'}:{' '}
+                      {new Date(recording.expires_at).toLocaleDateString()}
+                    </Text>
+                  </View>
+                )}
+
                 {/* Video Player */}
                 {(recording.video_url || recording.video_path) && (
                   <View style={styles.videoContainer}>
@@ -425,5 +460,19 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     borderRadius: 8,
     overflow: 'hidden',
+  },
+  expiryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: Spacing.md,
+  },
+  expiryText: {
+    fontSize: 12,
+    color: Colors.warning,
+    fontWeight: '600',
+  },
+  expiryTextExpired: {
+    color: Colors.error,
   },
 });

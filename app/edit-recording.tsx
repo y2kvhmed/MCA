@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { getCurrentUser } from '../lib/auth';
@@ -11,9 +11,11 @@ import {
 import { handleError } from '../lib/utils';
 import { extractGoogleDriveId } from '../lib/videoStream';
 import RecordingEditForm from '../components/RecordingEditForm';
+import DateTimePicker from '../components/DateTimePicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useToast } from '../contexts/ToastContext';
 import { Colors } from '../constants/Colors';
+import { Spacing } from '../constants/Styles';
 
 export default function EditRecording() {
   const router = useRouter();
@@ -24,6 +26,9 @@ export default function EditRecording() {
   const [recording, setRecording] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Optional expiry date loaded from the lesson (null = never expires)
+  const [expiresAt, setExpiresAt] = useState<Date | null>(null);
 
   useEffect(() => {
     loadData();
@@ -63,6 +68,7 @@ export default function EditRecording() {
       }
 
       setRecording(recordingData);
+      setExpiresAt(recordingData.expires_at ? new Date(recordingData.expires_at) : null);
     } catch (error) {
       console.error('Load data error:', error);
       handleError(error, 'Failed to load recording data');
@@ -89,6 +95,7 @@ export default function EditRecording() {
         video_path: driveId ? `gdrive://${driveId}` : (formData.video_path || null),
         duration_minutes: formData.duration_minutes,
         last_edited_by: user.id,
+        expires_at: expiresAt ? expiresAt.toISOString() : null,
       };
 
       if (formData.duration_minutes) {
@@ -140,6 +147,16 @@ export default function EditRecording() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.expirySection}>
+        <DateTimePicker
+          label="Expiry Date (Optional)"
+          value={expiresAt}
+          onChange={setExpiresAt}
+        />
+        <Text style={styles.expiryHint}>
+          Clear this to never expire. On the chosen date the recording disappears.
+        </Text>
+      </View>
       <RecordingEditForm
         initialData={initialData}
         onSave={handleSave}
@@ -155,5 +172,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  expirySection: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.lg,
+  },
+  expiryHint: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginTop: -Spacing.sm,
   },
 });
