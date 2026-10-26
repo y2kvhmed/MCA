@@ -72,10 +72,13 @@ export default function CreateTest() {
 
     setSaving(true);
     try {
+      // Build the date from local parts — toISOString() converts to UTC and can shift
+      // the calendar day backwards for early-morning local times.
+      const localDate = `${testDate.getFullYear()}-${String(testDate.getMonth() + 1).padStart(2, '0')}-${String(testDate.getDate()).padStart(2, '0')}`;
       const { data, error } = await createTest({
         title: title.trim(),
         description: description.trim(),
-        test_date: testDate.toISOString().split('T')[0],
+        test_date: localDate,
         max_score: maxScoreNum,
         school_id: selectedSchoolId,
         created_by: user.id,
@@ -149,8 +152,9 @@ export default function CreateTest() {
               <DateTimePicker
                 value={testDate}
                 onChange={setTestDate}
-                label="Select Date"
+                label=""
                 selectedLabel="Test date"
+                showTime={false}
               />
             </View>
 

@@ -11,6 +11,7 @@ interface DateTimePickerProps {
   placeholder?: string;
   required?: boolean;
   selectedLabel?: string;
+  showTime?: boolean;
 }
 
 export default function DateTimePicker({
@@ -19,6 +20,7 @@ export default function DateTimePicker({
   onChange,
   required = false,
   selectedLabel = 'Due',
+  showTime = true,
 }: DateTimePickerProps) {
   // Format dates for HTML date and time inputs: YYYY-MM-DD and HH:MM
   const getDatePart = (d: Date | null | undefined): string => {
@@ -83,8 +85,9 @@ export default function DateTimePicker({
 
   const formattedDisplay = value ? (
     value.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) +
-    ' at ' +
-    value.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
+    (showTime
+      ? ' at ' + value.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
+      : '')
   ) : null;
 
   return (
@@ -99,7 +102,7 @@ export default function DateTimePicker({
       <View style={styles.pickerRow}>
         {/* Date Chooser */}
         <View style={styles.pickerField}>
-          <Text style={styles.fieldSubLabel}>Date</Text>
+          {showTime && <Text style={styles.fieldSubLabel}>Date</Text>}
           <View style={styles.inputWrapper}>
             <Ionicons name="calendar-outline" size={18} color={Colors.primary} style={styles.fieldIcon} />
             {Platform.OS === 'web' ? (
@@ -134,37 +137,39 @@ export default function DateTimePicker({
         </View>
 
         {/* Time Chooser */}
-        <View style={styles.pickerField}>
-          <Text style={styles.fieldSubLabel}>Time</Text>
-          <View style={styles.inputWrapper}>
-            <Ionicons name="time-outline" size={18} color={Colors.primary} style={styles.fieldIcon} />
-            {Platform.OS === 'web' ? (
-              <input
-                type="time"
-                value={timeStr}
-                onChange={(e) => handleTimeChange(e.target.value)}
-                style={{
-                  flex: 1,
-                  border: 'none',
-                  outline: 'none',
-                  background: 'transparent',
-                  color: Colors.text.primary,
-                  fontSize: '15px',
-                  fontFamily: 'inherit',
-                  padding: '10px 4px',
-                  cursor: 'pointer',
-                }}
-              />
-            ) : (
-              <TouchableOpacity
-                style={styles.mobilePicker}
-                onPress={() => setPreset(0, 23, 59)}
-              >
-                <Text style={styles.pickerText}>{timeStr || 'Select Time'}</Text>
-              </TouchableOpacity>
-            )}
+        {showTime && (
+          <View style={styles.pickerField}>
+            <Text style={styles.fieldSubLabel}>Time</Text>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="time-outline" size={18} color={Colors.primary} style={styles.fieldIcon} />
+              {Platform.OS === 'web' ? (
+                <input
+                  type="time"
+                  value={timeStr}
+                  onChange={(e) => handleTimeChange(e.target.value)}
+                  style={{
+                    flex: 1,
+                    border: 'none',
+                    outline: 'none',
+                    background: 'transparent',
+                    color: Colors.text.primary,
+                    fontSize: '15px',
+                    fontFamily: 'inherit',
+                    padding: '10px 4px',
+                    cursor: 'pointer',
+                  }}
+                />
+              ) : (
+                <TouchableOpacity
+                  style={styles.mobilePicker}
+                  onPress={() => setPreset(0, 23, 59)}
+                >
+                  <Text style={styles.pickerText}>{timeStr || 'Select Time'}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
-        </View>
+        )}
       </View>
 
       {/* Display selected state */}
