@@ -150,6 +150,7 @@ export default function CreateTest() {
                 value={testDate}
                 onChange={setTestDate}
                 label="Select Date"
+                selectedLabel="Test date"
               />
             </View>
 

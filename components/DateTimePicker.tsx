@@ -10,6 +10,7 @@ interface DateTimePickerProps {
   onChange: (date: Date | null) => void;
   placeholder?: string;
   required?: boolean;
+  selectedLabel?: string;
 }
 
 export default function DateTimePicker({
@@ -17,6 +18,7 @@ export default function DateTimePicker({
   value,
   onChange,
   required = false,
+  selectedLabel = 'Due',
 }: DateTimePickerProps) {
   // Format dates for HTML date and time inputs: YYYY-MM-DD and HH:MM
   const getDatePart = (d: Date | null | undefined): string => {
@@ -169,7 +171,7 @@ export default function DateTimePicker({
       {formattedDisplay && (
         <View style={styles.selectedBox}>
           <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-          <Text style={styles.selectedText}>Due: {formattedDisplay}</Text>
+          <Text style={styles.selectedText}>{selectedLabel}: {formattedDisplay}</Text>
           <TouchableOpacity onPress={() => { setDateStr(''); setTimeStr('23:59'); onChange(null); }}>
             <Ionicons name="close-circle" size={16} color={Colors.text.tertiary} />
           </TouchableOpacity>

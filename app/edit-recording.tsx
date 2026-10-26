@@ -152,6 +152,7 @@ export default function EditRecording() {
           label="Expiry Date (Optional)"
           value={expiresAt}
           onChange={setExpiresAt}
+          selectedLabel="Expires"
         />
         <Text style={styles.expiryHint}>
           Clear this to never expire. On the chosen date the recording disappears.

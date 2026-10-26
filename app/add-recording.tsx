@@ -511,6 +511,7 @@ export default function AddRecording() {
             label="Expiry Date (Optional)"
             value={expiresAt}
             onChange={setExpiresAt}
+            selectedLabel="Expires"
           />
           <Text style={styles.expiryHint}>
             Leave empty so the recording never expires. On the chosen date it will
