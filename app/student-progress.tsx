@@ -37,6 +37,12 @@ export default function StudentProgress() {
       const authUser = await getCurrentUser();
       if (authUser) setCurrentUser(authUser);
 
+      // Privacy: students may only ever view their own progress/scores.
+      if (authUser?.role === 'student' && studentId !== authUser.id) {
+        setStudent(null);
+        return;
+      }
+
       const { data: studentData } = await getUserById(studentId);
       if (studentData) {
         setStudent(studentData);

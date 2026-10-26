@@ -175,6 +175,14 @@ export default function TeacherDashboard() {
               <Ionicons name="document-text-outline" size={24} color="#9C27B0" />
               <Text style={styles.actionText}>Student Notes</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/test-scores')}
+            >
+              <Ionicons name="stats-chart" size={24} color={Colors.success} />
+              <Text style={styles.actionText}>Test Scores</Text>
+            </TouchableOpacity>
           </View>
         </Card>
 
