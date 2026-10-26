@@ -274,19 +274,15 @@ export async function pickAssignmentFile(): Promise<{ success: boolean; file?: a
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = FILE_CONFIG.allowedTypes.join(',');
-        let settled = false;
+        // Some mobile browsers (Android Chrome / iOS Safari) ignore `click()` on an input
+        // that is not attached to the document, so keep it in the DOM but off-screen.
+        input.style.position = 'fixed';
+        input.style.left = '-9999px';
+        input.style.opacity = '0';
 
         const finish = (result: { success: boolean; file?: any; error?: string }) => {
-          if (settled) return;
-          settled = true;
-          window.removeEventListener('focus', onWindowFocus);
+          if (input.parentNode) input.parentNode.removeChild(input);
           resolve(result);
-        };
-
-        // Safari/iOS does not fire `change` when the picker is dismissed, which left the
-        // UI silently stuck. Detect the dialog closing and surface a real error instead.
-        const onWindowFocus = () => {
-          setTimeout(() => finish({ success: false, error: 'No file was selected (picker closed)' }), 1000);
         };
 
         input.onchange = (event: any) => {
@@ -303,7 +299,13 @@ export async function pickAssignmentFile(): Promise<{ success: boolean; file?: a
           }
         };
 
-        window.addEventListener('focus', onWindowFocus);
+        // Safari 16.4+ / Chrome 113+ fire `cancel` when the picker is dismissed.
+        // Older browsers simply never fire anything, which is harmless.
+        input.addEventListener('cancel', () => {
+          finish({ success: false, error: 'No file was selected' });
+        });
+
+        document.body.appendChild(input);
         input.click();
       });
     } else {
