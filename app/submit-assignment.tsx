@@ -23,7 +23,6 @@ export default function SubmitAssignment() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [existingSubmission, setExistingSubmission] = useState<any>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -80,16 +79,15 @@ export default function SubmitAssignment() {
   };
 
   const handlePickFile = async () => {
-    setUploadError(null);
     try {
       const result = await pickAssignmentFile();
       if (result.success && result.file) {
         setSelectedFile(result.file);
       } else if (result.error) {
-        setUploadError(`File pick failed: ${result.error}`);
+        handleError(null, result.error);
       }
-    } catch (error: any) {
-      setUploadError(`File pick failed: ${error?.message || String(error)}`);
+    } catch (error) {
+      handleError(error, 'Failed to pick file');
     }
   };
 
@@ -150,8 +148,6 @@ export default function SubmitAssignment() {
   const handleSubmit = async () => {
     if (!selectedFile || !user || !assignment) return;
     setSubmitting(true);
-    setUploadError(null);
-    let step = 'reading the selected file';
     try {
       let uploadPayload: any;
       if (typeof window !== 'undefined') {
@@ -163,12 +159,11 @@ export default function SubmitAssignment() {
           const response = await fetch(selectedFile.uri);
           uploadPayload = await response.blob();
         } else {
-          throw new Error(`Unsupported web file object (name: ${selectedFile?.name ?? 'unknown'}, type: ${typeof selectedFile}, keys: ${selectedFile ? Object.keys(selectedFile).join(',') : 'none'})`);
+          throw new Error(`Unsupported web file object (${selectedFile?.name ?? 'unknown'})`);
         }
       } else {
         // React Native's fetch cannot read `file://` URIs, so read the picked file's
         // bytes straight off disk instead — this is why mobile uploads were failing.
-        step = 'reading the file from the device';
         uploadPayload = await new LocalFile(selectedFile.uri).arrayBuffer();
       }
       
@@ -177,21 +172,14 @@ export default function SubmitAssignment() {
       const mimeType = selectedFile.type || selectedFile.mimeType || (selectedFile.file && selectedFile.file.type) || 'application/pdf';
       const fileSize = selectedFile.size || (uploadPayload && uploadPayload.size) || 0;
       
-      if (!uploadPayload) {
-        throw new Error(`File data is empty (payload is ${uploadPayload === null ? 'null' : typeof uploadPayload})`);
-      }
-
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
       const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
 
-      step = `uploading the file to storage (${fileSize ? formatFileSize(fileSize) : 'unknown size'}, ${mimeType})`;
       const { error: storageError } = await supabase.storage
         .from('submissions')
         .upload(filePath, uploadPayload, { contentType: mimeType, upsert: false });
 
       if (storageError) throw new Error(`Storage upload rejected: ${storageError.message}`);
-
-      step = 'saving the submission record';
 
       const { data: { publicUrl } } = supabase.storage.from('submissions').getPublicUrl(filePath);
 
@@ -241,10 +229,9 @@ export default function SubmitAssignment() {
 
       showSuccess(existingSubmission ? 'Assignment resubmitted successfully!' : 'Assignment submitted successfully!');
       handleBack();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Submit error:', error);
       handleError(error, 'Failed to submit assignment');
-      setUploadError(`Failed while ${step}: ${error?.message || String(error)}`);
     } finally {
       setSubmitting(false);
     }
@@ -396,25 +383,7 @@ export default function SubmitAssignment() {
               </TouchableOpacity>
             </View>
           )}
-
-          {selectedFile && (
-            <View style={styles.debugBox}>
-              <Text selectable style={styles.debugText}>
-                {`file: ${selectedFile.name ?? 'n/a'}\ntype: ${selectedFile.type || selectedFile.mimeType || 'unknown'}\nsize: ${selectedFile.size ?? 'n/a'}\nuri: ${selectedFile.uri ?? (selectedFile.file ? '<File object>' : 'n/a')}`}
-              </Text>
-            </View>
-          )}
         </Card>
-
-        {uploadError && (
-          <View style={styles.detailErrorBanner}>
-            <View style={styles.detailErrorHeader}>
-              <Ionicons name="bug" size={20} color={Colors.error} />
-              <Text style={styles.detailErrorTitle}>Upload error</Text>
-            </View>
-            <Text selectable style={styles.detailErrorText}>{uploadError}</Text>
-          </View>
-        )}
 
         {isOverdue && !existingSubmission && (
           <View style={styles.errorBanner}>
@@ -529,20 +498,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
   },
   errorText: { flex: 1, fontSize: 14, color: Colors.error, marginLeft: Spacing.sm, fontWeight: '500' },
-  detailErrorBanner: {
-    margin: Spacing.md, padding: Spacing.md, backgroundColor: '#0F172A',
-    borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
-  },
-  detailErrorHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm },
-  detailErrorTitle: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', marginLeft: Spacing.sm },
-  detailErrorText: {
-    fontSize: 12, color: '#FCA5A5', fontFamily: 'monospace', lineHeight: 18,
-  },
-  debugBox: {
-    marginTop: Spacing.md, padding: Spacing.md, backgroundColor: '#F1F5F9',
-    borderRadius: 8, borderWidth: 1, borderColor: Colors.border.light,
-  },
-  debugText: { fontSize: 11, color: '#334155', fontFamily: 'monospace', lineHeight: 16 },
   submitButton: { marginHorizontal: Spacing.md, marginTop: Spacing.md },
   bottomSpacer: { height: Spacing.xxxl },
 });
