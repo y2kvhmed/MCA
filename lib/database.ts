@@ -1001,7 +1001,9 @@ export async function getTeacherSchoolStats(teacherId: string) {
           .eq('role', 'teacher')
           .eq('is_active', true),
         supabase.from('study_materials').select('id').in('school_id', schoolIds),
-        supabase.from('student_test_results').select('id').in('school_id', schoolIds),
+        // Count the tests themselves (not one row per student result), so a test
+        // taken by many students still counts as a single test.
+        supabase.from('tests').select('id').in('school_id', schoolIds),
       ]);
 
       totalStudents = studentsRes.data?.length || 0;
