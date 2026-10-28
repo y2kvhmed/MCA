@@ -179,16 +179,26 @@ export async function getCurrentUser(): Promise<User | null> {
 
       logAuth('Local user session found', { id: user.id, role: user.role });
 
-      // Verify the user is still active in the database (but don't fail if we can't check)
+      // Verify the user is still active in the database.
+      // IMPORTANT: only clear the session if we get a definitive "not active"
+      // result. Transient errors (network blips, timeouts) must NOT log the
+      // user out — return the cached user instead.
       try {
         const { data: userData, error } = await supabase
           .from('app_users')
           .select('*, school:schools(id, name)')
           .eq('id', user.id)
           .eq('is_active', true)
-          .single();
+          .maybeSingle();
 
-        if (error || !userData) {
+        if (error) {
+          // Database error — keep the cached session, don't log out.
+          logAuth('DB check error, keeping cached session', error.message);
+          return user;
+        }
+
+        if (!userData) {
+          // Query succeeded but returned no rows → user is deactivated or deleted.
           logAuth('User no longer active, clearing session');
           await AsyncStorage.removeItem('current_user');
           return null;

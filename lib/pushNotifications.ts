@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
+import { getWebPushSubscriptions } from './webPush';
 
 // Configure notification behavior
 Notifications.setNotificationHandler({
@@ -120,24 +121,39 @@ export async function sendNotificationToUsers(
       return;
     }
 
-    // Send notifications via Expo Push API
-    const messages = tokens.map((tokenRecord: any) => ({
-      to: tokenRecord.token,
-      sound: 'default',
-      title,
-      body,
-      data,
-    }));
+    // --- Native push (Expo Push API) ---
+    const expoTokens = tokens.filter((t: any) => !t.token.startsWith('http'));
+    if (expoTokens.length > 0) {
+      const messages = expoTokens.map((tokenRecord: any) => ({
+        to: tokenRecord.token,
+        sound: 'default',
+        title,
+        body,
+        data,
+      }));
+      for (let i = 0; i < messages.length; i += 100) {
+        const batch = messages.slice(i, i + 100);
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(batch),
+        });
+      }
+    }
 
-    // Send in batches of 100 (Expo limit)
-    for (let i = 0; i < messages.length; i += 100) {
-      const batch = messages.slice(i, i + 100);
-      await fetch('https://exp.host/--/api/v2/push/send', {
+    // --- Web push (Web Push API via /api/send-push) ---
+    const webSubscriptions = await getWebPushSubscriptions(userIds);
+    if (webSubscriptions.length > 0) {
+      await fetch('/api/send-push', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(batch),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptions: webSubscriptions,
+          title,
+          body,
+          data,
+          url: data?.url || '/',
+        }),
       });
     }
 

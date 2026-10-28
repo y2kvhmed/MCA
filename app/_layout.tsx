@@ -138,6 +138,16 @@ export default function RootLayout() {
           await savePushToken(user.id, token);
         }
       }
+
+      // Web push: register service worker and subscribe for background push
+      // (Android Chrome + iOS 16.4+ Home Screen apps).
+      if (typeof window !== 'undefined') {
+        const user = await getCurrentUser();
+        if (user) {
+          const { subscribeToWebPush } = await import('../lib/webPush');
+          await subscribeToWebPush(user.id);
+        }
+      }
     } catch (error) {
       console.error('Failed to initialize notifications:', error);
     }

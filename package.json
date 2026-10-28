@@ -47,11 +47,14 @@
     "react-native-url-polyfill": "^3.0.0",
     "react-native-web": "^0.21.0",
     "react-native-webview": "^13.16.0",
-    "readable-stream": "^4.7.0"
+    "readable-stream": "^4.7.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@expo/webpack-config": "^19.0.1",
     "@types/react": "~19.1.0",
+    "@types/web-push": "^3.6.4",
+    "@vercel/node": "^28.0.0",
     "typescript": "~5.9.2"
   },
   "private": true
