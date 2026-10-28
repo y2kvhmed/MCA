@@ -4,7 +4,7 @@ import { File as LocalFile } from 'expo-file-system';
 
 // File upload configuration
 export const FILE_CONFIG = {
-  maxSizeBytes: 50 * 1024 * 1024, // 50MB for assignments and student work
+  maxSizeBytes: 30 * 1024 * 1024, // 30MB for assignments and student work
   maxMaterialSizeBytes: 100 * 1024 * 1024, // 100MB for study materials
   maxVideoSizeBytes: 1024 * 1024 * 1024, // 1GB for video recordings
   allowedTypes: [

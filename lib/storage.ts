@@ -12,7 +12,7 @@ const RECORDINGS_BUCKET = 'recordings';
 const ASSETS_BUCKET = 'assets';
 
 // File size limits (in bytes)
-const MAX_SUBMISSION_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_SUBMISSION_SIZE = 30 * 1024 * 1024; // 30MB
 const MAX_RECORDING_SIZE = 100 * 1024 * 1024; // 100MB
 const MAX_ASSET_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -61,7 +61,7 @@ export async function uploadSubmission(
         // Validate size
         const isValidSize = await validateFileSize(fileUri, MAX_SUBMISSION_SIZE);
         if (!isValidSize) {
-            return { path: '', error: 'File size exceeds 10MB limit' };
+            return { path: '', error: 'File size exceeds 30MB limit' };
         }
 
         // Generate unique file path

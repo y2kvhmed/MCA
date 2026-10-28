@@ -360,7 +360,7 @@ export default function SubmitAssignment() {
 
         <Card style={styles.uploadCard}>
           <Text style={styles.sectionTitle}>{existingSubmission ? 'Resubmit your work' : 'Add your work'}</Text>
-          <Text style={styles.uploadHint}>Only PDF files are accepted (Max 10MB)</Text>
+          <Text style={styles.uploadHint}>Only PDF files are accepted (Max 30MB)</Text>
           {!selectedFile ? (
             <TouchableOpacity style={styles.uploadArea} onPress={handlePickFile}>
               <View style={styles.uploadIconCircle}>
