@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { File as LocalFile } from 'expo-file-system';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { pickAssignmentFile } from '../lib/fileUpload';
+import { pickAssignmentFile, uploadFileToSupabase, FILE_CONFIG } from '../lib/fileUpload';
 import { formatFileSize, formatDueDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -153,39 +153,24 @@ export default function SubmitAssignment() {
     setUploadError(null);
     let step = 'preparing the file for upload';
     try {
-      let uploadPayload: any;
-      if (typeof window !== 'undefined') {
-        if (selectedFile instanceof Blob) {
-          uploadPayload = selectedFile;
-        } else if (selectedFile.file instanceof Blob) {
-          uploadPayload = selectedFile.file;
-        } else if (selectedFile.uri && (selectedFile.uri.startsWith('blob:') || selectedFile.uri.startsWith('data:'))) {
-          const response = await fetch(selectedFile.uri);
-          uploadPayload = await response.blob();
-        } else {
-          throw new Error(`Unsupported web file object (name: "${selectedFile?.name ?? 'unknown'}", type: "${selectedFile?.type ?? 'unknown'}", keys: ${Object.keys(selectedFile).join(', ')})`);
-        }
-      } else {
-        step = 'reading the file from device storage';
-        uploadPayload = await new LocalFile(selectedFile.uri).arrayBuffer();
-      }
-
       const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';
       const fileExt = originalName.split('.').pop() || 'pdf';
       const mimeType = selectedFile.type || selectedFile.mimeType || (selectedFile.file && selectedFile.file.type) || 'application/pdf';
-      const fileSize = selectedFile.size || (uploadPayload && uploadPayload.size) || 0;
+      const fileSize = selectedFile.size || 0;
 
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
       const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
 
       step = `uploading to storage (${formatFileSize(fileSize)}, ${mimeType})`;
-      const { error: storageError } = await supabase.storage
-        .from('submissions')
-        .upload(filePath, uploadPayload, { contentType: mimeType, upsert: false });
+      const uploadResult = await uploadFileToSupabase(
+        selectedFile,
+        FILE_CONFIG.buckets.assignments,
+        filePath
+      );
 
-      if (storageError) throw new Error(`Storage upload rejected: ${storageError.message}`);
+      if (!uploadResult.success) throw new Error(`Storage upload rejected: ${uploadResult.error}`);
 
-      const { data: { publicUrl } } = supabase.storage.from('submissions').getPublicUrl(filePath);
+      const publicUrl = uploadResult.data!.publicUrl;
 
       const isLate = assignment.due_date ? new Date() > new Date(assignment.due_date) : false;
       let submissionError = null;
@@ -228,7 +213,7 @@ export default function SubmitAssignment() {
       }
 
       if (submissionError) {
-        await supabase.storage.from('submissions').remove([filePath]);
+        await supabase.storage.from(FILE_CONFIG.buckets.assignments).remove([filePath]);
         throw new Error(`Could not save submission record: ${submissionError.message}`);
       }
 

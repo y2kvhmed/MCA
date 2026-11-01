@@ -19,7 +19,7 @@ export const FILE_CONFIG = {
   ],
   allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'txt'],
   buckets: {
-    assignments: 'assignment-submissions',
+    assignments: 'submissions',
     profiles: 'user-profiles',
     lessons: 'lesson-materials',
     general: 'general-files'
