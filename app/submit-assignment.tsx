@@ -23,6 +23,7 @@ export default function SubmitAssignment() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [existingSubmission, setExistingSubmission] = useState<any>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -79,15 +80,16 @@ export default function SubmitAssignment() {
   };
 
   const handlePickFile = async () => {
+    setUploadError(null);
     try {
       const result = await pickAssignmentFile();
       if (result.success && result.file) {
         setSelectedFile(result.file);
       } else if (result.error) {
-        handleError(null, result.error);
+        setUploadError(`File pick failed: ${result.error}`);
       }
-    } catch (error) {
-      handleError(error, 'Failed to pick file');
+    } catch (error: any) {
+      setUploadError(`File pick failed: ${error?.message || String(error)}`);
     }
   };
 
@@ -148,6 +150,8 @@ export default function SubmitAssignment() {
   const handleSubmit = async () => {
     if (!selectedFile || !user || !assignment) return;
     setSubmitting(true);
+    setUploadError(null);
+    let step = 'preparing the file for upload';
     try {
       let uploadPayload: any;
       if (typeof window !== 'undefined') {
@@ -159,22 +163,22 @@ export default function SubmitAssignment() {
           const response = await fetch(selectedFile.uri);
           uploadPayload = await response.blob();
         } else {
-          throw new Error(`Unsupported web file object (${selectedFile?.name ?? 'unknown'})`);
+          throw new Error(`Unsupported web file object (name: "${selectedFile?.name ?? 'unknown'}", type: "${selectedFile?.type ?? 'unknown'}", keys: ${Object.keys(selectedFile).join(', ')})`);
         }
       } else {
-        // React Native's fetch cannot read `file://` URIs, so read the picked file's
-        // bytes straight off disk instead — this is why mobile uploads were failing.
+        step = 'reading the file from device storage';
         uploadPayload = await new LocalFile(selectedFile.uri).arrayBuffer();
       }
-      
+
       const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';
       const fileExt = originalName.split('.').pop() || 'pdf';
       const mimeType = selectedFile.type || selectedFile.mimeType || (selectedFile.file && selectedFile.file.type) || 'application/pdf';
       const fileSize = selectedFile.size || (uploadPayload && uploadPayload.size) || 0;
-      
+
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
       const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
 
+      step = `uploading to storage (${formatFileSize(fileSize)}, ${mimeType})`;
       const { error: storageError } = await supabase.storage
         .from('submissions')
         .upload(filePath, uploadPayload, { contentType: mimeType, upsert: false });
@@ -186,6 +190,7 @@ export default function SubmitAssignment() {
       const isLate = assignment.due_date ? new Date() > new Date(assignment.due_date) : false;
       let submissionError = null;
 
+      step = 'saving the submission record';
       if (existingSubmission) {
         const { error } = await supabase
           .from('submissions')
@@ -229,9 +234,13 @@ export default function SubmitAssignment() {
 
       showSuccess(existingSubmission ? 'Assignment resubmitted successfully!' : 'Assignment submitted successfully!');
       handleBack();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Submit error:', error);
-      handleError(error, 'Failed to submit assignment');
+      const detail = error?.message || error?.toString?.() || String(error);
+      const payloadInfo = selectedFile
+        ? ` | file: ${selectedFile.name ?? 'unknown'}, type: ${selectedFile.type ?? selectedFile.mimeType ?? 'unknown'}, size: ${formatFileSize(selectedFile.size ?? 0)}`
+        : '';
+      setUploadError(`Failed while ${step}: ${detail}${payloadInfo}`);
     } finally {
       setSubmitting(false);
     }
@@ -385,6 +394,13 @@ export default function SubmitAssignment() {
           )}
         </Card>
 
+        {uploadError && (
+          <View style={styles.uploadErrorBanner}>
+            <Ionicons name="alert-circle" size={20} color={Colors.error} />
+            <Text style={styles.uploadErrorText}>{uploadError}</Text>
+          </View>
+        )}
+
         {isOverdue && !existingSubmission && (
           <View style={styles.errorBanner}>
             <Ionicons name="close-circle" size={20} color={Colors.error} />
@@ -498,6 +514,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
   },
   errorText: { flex: 1, fontSize: 14, color: Colors.error, marginLeft: Spacing.sm, fontWeight: '500' },
+  uploadErrorBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', margin: Spacing.md, padding: Spacing.md,
+    backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
+  },
+  uploadErrorText: { flex: 1, fontSize: 13, color: Colors.error, marginLeft: Spacing.sm, fontFamily: 'monospace' },
   submitButton: { marginHorizontal: Spacing.md, marginTop: Spacing.md },
   bottomSpacer: { height: Spacing.xxxl },
 });
