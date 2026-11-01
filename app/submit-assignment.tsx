@@ -23,7 +23,6 @@ export default function SubmitAssignment() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [existingSubmission, setExistingSubmission] = useState<any>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -80,16 +79,15 @@ export default function SubmitAssignment() {
   };
 
   const handlePickFile = async () => {
-    setUploadError(null);
     try {
       const result = await pickAssignmentFile();
       if (result.success && result.file) {
         setSelectedFile(result.file);
       } else if (result.error) {
-        setUploadError(`File pick failed: ${result.error}`);
+        handleError(null, result.error);
       }
     } catch (error: any) {
-      setUploadError(`File pick failed: ${error?.message || String(error)}`);
+      handleError(error, 'Failed to pick file');
     }
   };
 
@@ -150,8 +148,6 @@ export default function SubmitAssignment() {
   const handleSubmit = async () => {
     if (!selectedFile || !user || !assignment) return;
     setSubmitting(true);
-    setUploadError(null);
-    let step = 'preparing the file for upload';
     try {
       const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';
       const fileExt = originalName.split('.').pop() || 'pdf';
@@ -161,7 +157,6 @@ export default function SubmitAssignment() {
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
       const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
 
-      step = `uploading to storage (${formatFileSize(fileSize)}, ${mimeType})`;
       const uploadResult = await uploadFileToSupabase(
         selectedFile,
         FILE_CONFIG.buckets.assignments,
@@ -175,7 +170,6 @@ export default function SubmitAssignment() {
       const isLate = assignment.due_date ? new Date() > new Date(assignment.due_date) : false;
       let submissionError = null;
 
-      step = 'saving the submission record';
       if (existingSubmission) {
         const { error } = await supabase
           .from('submissions')
@@ -221,11 +215,7 @@ export default function SubmitAssignment() {
       handleBack();
     } catch (error: any) {
       console.error('Submit error:', error);
-      const detail = error?.message || error?.toString?.() || String(error);
-      const payloadInfo = selectedFile
-        ? ` | file: ${selectedFile.name ?? 'unknown'}, type: ${selectedFile.type ?? selectedFile.mimeType ?? 'unknown'}, size: ${formatFileSize(selectedFile.size ?? 0)}`
-        : '';
-      setUploadError(`Failed while ${step}: ${detail}${payloadInfo}`);
+      handleError(error, 'Failed to submit assignment');
     } finally {
       setSubmitting(false);
     }
@@ -379,13 +369,6 @@ export default function SubmitAssignment() {
           )}
         </Card>
 
-        {uploadError && (
-          <View style={styles.uploadErrorBanner}>
-            <Ionicons name="alert-circle" size={20} color={Colors.error} />
-            <Text style={styles.uploadErrorText}>{uploadError}</Text>
-          </View>
-        )}
-
         {isOverdue && !existingSubmission && (
           <View style={styles.errorBanner}>
             <Ionicons name="close-circle" size={20} color={Colors.error} />
@@ -499,11 +482,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
   },
   errorText: { flex: 1, fontSize: 14, color: Colors.error, marginLeft: Spacing.sm, fontWeight: '500' },
-  uploadErrorBanner: {
-    flexDirection: 'row', alignItems: 'flex-start', margin: Spacing.md, padding: Spacing.md,
-    backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
-  },
-  uploadErrorText: { flex: 1, fontSize: 13, color: Colors.error, marginLeft: Spacing.sm, fontFamily: 'monospace' },
   submitButton: { marginHorizontal: Spacing.md, marginTop: Spacing.md },
   bottomSpacer: { height: Spacing.xxxl },
 });
