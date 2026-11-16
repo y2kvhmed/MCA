@@ -23,6 +23,14 @@ export default function SubmitAssignment() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [existingSubmission, setExistingSubmission] = useState<any>(null);
+  const [errorLog, setErrorLog] = useState<string | null>(null);
+
+  // Small debug helper: capture the real error message so it is visible on screen.
+  const logError = (label: string, error?: any) => {
+    const detail = error?.message || error?.error_description || (typeof error === 'string' ? error : '') || (error ? String(error) : '');
+    setErrorLog(detail ? `${label}: ${detail}` : label);
+    console.error(`[submit-assignment] ${label}`, error);
+  };
 
   useEffect(() => {
     loadData();
@@ -72,6 +80,7 @@ export default function SubmitAssignment() {
       }
     } catch (error) {
       console.error('Load data error:', error);
+      logError('Failed to load assignment', error);
       handleError(error, 'Failed to load assignment');
     } finally {
       setLoading(false);
@@ -84,9 +93,11 @@ export default function SubmitAssignment() {
       if (result.success && result.file) {
         setSelectedFile(result.file);
       } else if (result.error) {
+        logError('Could not select file', result.error);
         handleError(null, result.error);
       }
     } catch (error: any) {
+      logError('Failed to pick file', error);
       handleError(error, 'Failed to pick file');
     }
   };
@@ -146,8 +157,12 @@ export default function SubmitAssignment() {
   };
 
   const handleSubmit = async () => {
-    if (!selectedFile || !user || !assignment) return;
+    if (!selectedFile || !user || !assignment) {
+      logError('Cannot submit — missing data', { hasFile: !!selectedFile, hasUser: !!user, hasAssignment: !!assignment });
+      return;
+    }
     setSubmitting(true);
+    setErrorLog(null);
     try {
       const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';
       const fileExt = originalName.split('.').pop() || 'pdf';
@@ -215,6 +230,7 @@ export default function SubmitAssignment() {
       handleBack();
     } catch (error: any) {
       console.error('Submit error:', error);
+      logError('Submit failed', error);
       handleError(error, 'Failed to submit assignment');
     } finally {
       setSubmitting(false);
@@ -245,6 +261,12 @@ export default function SubmitAssignment() {
         </View>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
           <Text style={{ color: Colors.text.primary, fontSize: 16 }}>Assignment not found</Text>
+          {errorLog && (
+            <View style={[styles.debugBanner, { marginTop: 16 }]}>
+              <Ionicons name="bug" size={18} color={Colors.error} />
+              <Text style={styles.debugText} selectable>{errorLog}</Text>
+            </View>
+          )}
           <Button title="Back to Dashboard" onPress={handleBack} style={{ marginTop: 16 }} />
         </View>
       </SafeAreaView>
@@ -301,6 +323,16 @@ export default function SubmitAssignment() {
               (daysUntilDue !== null && daysUntilDue <= 1 && !isOverdue) && styles.dueTextUrgent]}>
               {isOverdue ? 'Missing - ' : ''}{formatDueDate(assignment.due_date)}
             </Text>
+          </View>
+        )}
+
+        {errorLog && (
+          <View style={styles.debugBanner}>
+            <Ionicons name="bug" size={18} color={Colors.error} />
+            <Text style={styles.debugText} selectable>{errorLog}</Text>
+            <TouchableOpacity onPress={() => setErrorLog(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={18} color={Colors.error} />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -482,6 +514,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
   },
   errorText: { flex: 1, fontSize: 14, color: Colors.error, marginLeft: Spacing.sm, fontWeight: '500' },
+  debugBanner: {
+    flexDirection: 'row', alignItems: 'center', margin: Spacing.md, padding: Spacing.md,
+    backgroundColor: Colors.error + '15', borderRadius: 8, borderWidth: 1, borderColor: Colors.error,
+  },
+  debugText: { flex: 1, fontSize: 12, color: Colors.error, marginHorizontal: Spacing.sm, fontFamily: 'monospace' as any },
   submitButton: { marginHorizontal: Spacing.md, marginTop: Spacing.md },
   bottomSpacer: { height: Spacing.xxxl },
 });
