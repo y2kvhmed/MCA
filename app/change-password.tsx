@@ -11,7 +11,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { handleError, showSuccess } from '../lib/utils';
@@ -92,37 +91,25 @@ export default function ChangePasswordScreen() {
 
     setSaving(true);
     try {
-      // 1. Verify current password in app_users
-      const { data: dbUser, error: checkError } = await supabase
-        .from('app_users')
-        .select('id, password_hash')
-        .eq('id', currentUser.id)
-        .single();
+      // 1. Verify the current password by re-authenticating against Supabase Auth.
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: currentUser.email,
+        password: currentPassword,
+      });
 
-      if (checkError || !dbUser) {
-        throw new Error('Could not verify your account. Please log in again.');
-      }
-
-      if (dbUser.password_hash !== currentPassword) {
+      if (verifyError) {
         notifyError('Incorrect current password. Please try again.');
         setSaving(false);
         return;
       }
 
-      // 2. Update password_hash in database
-      const { error: updateError } = await supabase
-        .from('app_users')
-        .update({
-          password_hash: newPassword.trim(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', currentUser.id);
+      // 2. Update the password in Supabase Auth. The auth-bridge trigger keeps
+      //    app_users.password_hash in sync automatically.
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
 
       if (updateError) throw updateError;
-
-      // 3. Update local session cache
-      const updatedUser = { ...currentUser, password_hash: newPassword.trim() };
-      await AsyncStorage.setItem('current_user', JSON.stringify(updatedUser));
 
       showSuccess('Password updated successfully.');
       handleBack();

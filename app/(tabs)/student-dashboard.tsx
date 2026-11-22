@@ -6,8 +6,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../../lib/auth';
 import { getStudentStats, getAssignmentsForStudent, getSubmissionsByStudent, getMaterialsForStudent } from '../../lib/database';
 import { useNotifications } from '../../contexts/NotificationContext';
-import { formatDueDate, handleError } from '../../lib/utils';
+import { formatDueDate, handleError, showSuccess } from '../../lib/utils';
 import { loadStudentDashboard } from '../../lib/dashboardUtils';
+import { markOnlineAttendance, openOnlineLesson, ONLINE_LESSON_URL } from '../../lib/onlineLesson';
 import Card from '../../components/Card';
 import AnimatedCard from '../../components/AnimatedCard';
 import FadeInView from '../../components/FadeInView';
@@ -30,6 +31,7 @@ export default function StudentDashboard() {
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [joiningOnline, setJoiningOnline] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -75,6 +77,30 @@ export default function StudentDashboard() {
   const onRefresh = () => {
     setRefreshing(true);
     loadData();
+  };
+
+  const handleJoinOnlineLesson = async () => {
+    if (joiningOnline) return;
+    setJoiningOnline(true);
+
+    // Open the room first, synchronously, so the browser cannot treat it as a
+    // popup and block it while the attendance request is in flight.
+    openOnlineLesson(ONLINE_LESSON_URL).catch(() => {});
+
+    try {
+      const result = await markOnlineAttendance();
+      if (!result.recorded) {
+        showSuccess(result.message || 'No online lesson is open right now.');
+      } else if (result.alreadyMarked) {
+        showSuccess('You are already marked present today');
+      } else {
+        showSuccess('You are marked present for today');
+      }
+    } catch (error) {
+      handleError(error, 'Could not mark your attendance');
+    } finally {
+      setJoiningOnline(false);
+    }
   };
 
   if (loading) {
@@ -206,6 +232,15 @@ export default function StudentDashboard() {
             >
               <Ionicons name="mail-outline" size={24} color="#FF5722" />
               <Text style={styles.actionText}>Inbox</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionButton, styles.onlineLessonButton, joiningOnline && styles.onlineLessonButtonDisabled]}
+              onPress={handleJoinOnlineLesson}
+              disabled={joiningOnline}
+            >
+              <Ionicons name="videocam" size={24} color={Colors.primary} />
+              <Text style={styles.actionText}>Join Online Lesson</Text>
             </TouchableOpacity>
           </View>
         </AnimatedCard>
@@ -394,6 +429,12 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     marginTop: Spacing.sm,
     fontWeight: '500',
+  },
+  onlineLessonButton: {
+    width: '100%',
+  },
+  onlineLessonButtonDisabled: {
+    opacity: 0.6,
   },
   assignmentsCard: {
     margin: Spacing.lg,

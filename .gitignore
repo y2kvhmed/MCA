@@ -35,6 +35,9 @@ yarn-error.*
 .env
 .env*.local
 
+# local database backups (contain sensitive data, never commit)
+backups/
+
 # typescript
 *.tsbuildinfo
 

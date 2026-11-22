@@ -135,7 +135,7 @@ export const NotificationTemplates = {
 export function scheduleNotification(
   options: NotificationOptions,
   delayMs: number
-): NodeJS.Timeout {
+): ReturnType<typeof setTimeout> {
   return setTimeout(() => {
     browserNotifications.show(options);
   }, delayMs);
@@ -144,7 +144,7 @@ export function scheduleNotification(
 export function scheduleRecurringNotification(
   options: NotificationOptions,
   intervalMs: number
-): NodeJS.Timeout {
+): ReturnType<typeof setInterval> {
   return setInterval(() => {
     browserNotifications.show(options);
   }, intervalMs);

@@ -46,12 +46,15 @@ export default function SchoolReports() {
 
       // Load school statistics
       const [
-        { data: students },
+        { count: studentCount },
         { data: teachers },
         { data: assignments },
         { data: materials }
       ] = await Promise.all([
-        supabase.from('app_users').select('id').eq('school_id', targetSchoolId).eq('role', 'student'),
+        supabase.from('app_users')
+          .select('id', { count: 'exact', head: true })
+          .eq('school_id', targetSchoolId)
+          .eq('role', 'student'),
         supabase.from('app_users').select('id').eq('school_id', targetSchoolId).eq('role', 'teacher'),
         supabase.from('assignments').select('id').eq('school_id', targetSchoolId),
         supabase.from('study_materials').select('id').eq('school_id', targetSchoolId)
@@ -69,7 +72,7 @@ export default function SchoolReports() {
         : 0;
 
       setStats({
-        totalStudents: students?.length || 0,
+        totalStudents: studentCount || 0,
         totalTeachers: teachers?.length || 0,
         totalAssignments: assignments?.length || 0,
         totalMaterials: materials?.length || 0,

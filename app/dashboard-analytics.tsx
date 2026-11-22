@@ -96,17 +96,25 @@ export default function DashboardAnalytics() {
   const loadTeacherAnalytics = async (teacherId: string) => {
     try {
       const dateFilter = getDateFilter();
+      const { getTeacherSchoolIds } = await import('../lib/database');
+      const schoolIds = await getTeacherSchoolIds(teacherId);
       
       // Get teacher-specific statistics
       const [assignments, submissions, students] = await Promise.all([
         supabase.from('assignments').select('id, created_at, max_score').eq('teacher_id', teacherId).gte('created_at', dateFilter),
         supabase.from('submissions').select('id, submitted_at, grade, assignment:assignments!inner(teacher_id)').eq('assignment.teacher_id', teacherId).gte('submitted_at', dateFilter),
-        supabase.from('app_users').select('id, school_id').eq('role', 'student').eq('school_id', user?.school_id || '')
+        schoolIds.length > 0
+          ? supabase.from('app_users')
+            .select('id', { count: 'exact', head: true })
+            .in('school_id', schoolIds)
+            .eq('role', 'student')
+            .eq('is_active', true)
+          : Promise.resolve({ count: 0 }),
       ]);
 
       const totalAssignments = assignments.data?.length || 0;
       const totalSubmissions = submissions.data?.length || 0;
-      const totalStudents = students.data?.length || 0;
+      const totalStudents = students.count || 0;
       
       const gradedSubmissions = submissions.data?.filter(s => s.grade !== null) || [];
       const averageGrade = gradedSubmissions.length > 0

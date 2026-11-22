@@ -9,103 +9,59 @@ const logAuth = (message: string, data?: any) => {
   }
 };
 
+// Explicit column list for reading a user profile. password_hash is deliberately
+// excluded so it is never written into local storage or shipped to the client.
+const PROFILE_COLUMNS =
+  'id, email, name, full_name, role, school_id, grade_level, phone, parent_phone, avatar_url, push_token, is_active, linked_student_id, created_at, updated_at, school:schools(id, name)';
+
+// The untyped Supabase client infers embedded to-one relations (e.g. `school:schools`)
+// as arrays. At runtime PostgREST returns a single object for these, so normalize
+// the shape here and hand back a well-typed User.
+function toUser(row: any): User {
+  const school = Array.isArray(row?.school) ? row.school[0] : row?.school;
+  return { ...row, school } as User;
+}
+
 export async function signIn(email: string, password: string) {
   const normalizedEmail = email.trim().toLowerCase();
   logAuth('Sign in attempt', { email: normalizedEmail, passwordLength: password.length });
-  
+
   try {
-    // Direct database lookup with case-insensitive email match
-    logAuth('Attempting direct database lookup');
-    const { data: userCheck, error: checkError } = await supabase
-      .from('app_users')
-      .select('*')
-      .ilike('email', normalizedEmail)
-      .single();
+    // Authenticate against Supabase Auth. This establishes a real session so the
+    // database can identify the caller (auth.uid()) and enforce RLS policies.
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
 
-    if (checkError) {
-      logAuth('Database lookup failed', checkError);
-      
-      // If direct lookup fails, try Supabase Auth
-      logAuth('Trying Supabase Auth');
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
-        password,
-      });
-
-      if (authData.user && !authError) {
-        logAuth('Supabase Auth successful', authData.user.id);
-        
-        // Get user from app_users table
-        const { data: userData, error: userError } = await supabase
-          .from('app_users')
-          .select('*')
-          .eq('id', authData.user.id)
-          .single();
-
-        if (userData) {
-          logAuth('User profile found', userData.role);
-          
-          // Check if account is active
-          if (!userData.is_active) {
-            await supabase.auth.signOut();
-            return { user: null, error: 'Your account has been deactivated. Please contact an administrator.' };
-          }
-
-          // Check maintenance mode and login controls for non-admins
-          try {
-            const { data: appSettings } = await supabase
-              .from('app_settings')
-              .select('*')
-              .eq('id', 1)
-              .single();
-
-            if (appSettings) {
-              if (appSettings.maintenance_mode && userData.role !== 'admin') {
-                logAuth('Maintenance mode blocked non-admin user:', userData.role);
-                await supabase.auth.signOut();
-                return {
-                  user: null,
-                  error: appSettings.maintenance_message || 'The app is currently under maintenance. Please try again later.'
-                };
-              }
-
-              if (userData.role === 'student' && appSettings.allow_student_login === false) {
-                await supabase.auth.signOut();
-                return { user: null, error: 'Student login is currently disabled. Please contact your administrator.' };
-              }
-
-              if (userData.role === 'teacher' && appSettings.allow_teacher_login === false) {
-                await supabase.auth.signOut();
-                return { user: null, error: 'Teacher login is currently disabled. Please contact your administrator.' };
-              }
-            }
-          } catch (settingsError) {
-            logAuth('Could not check app settings', settingsError);
-          }
-
-          await AsyncStorage.setItem('current_user', JSON.stringify(userData));
-          return { user: userData as User, error: null };
-        } else {
-          logAuth('No user profile found for authenticated user');
-          await supabase.auth.signOut();
-          return { user: null, error: 'User profile not found' };
-        }
-      } else {
-        logAuth('Both database and auth lookup failed');
-        return { user: null, error: 'Invalid email or password' };
-      }
+    if (authError || !authData.user) {
+      logAuth('Supabase Auth failed', authError?.message);
+      return { user: null, error: 'Invalid email or password' };
     }
 
-    // Direct database lookup succeeded
-    logAuth('Database user found', { id: userCheck.id, role: userCheck.role, active: userCheck.is_active });
+    logAuth('Supabase Auth successful', authData.user.id);
 
-    // Check if account is deactivated
-    if (!userCheck.is_active) {
+    // Load the application profile for the authenticated user.
+    const { data: userData, error: userError } = await supabase
+      .from('app_users')
+      .select(PROFILE_COLUMNS)
+      .eq('id', authData.user.id)
+      .single();
+
+    if (userError || !userData) {
+      logAuth('No app profile found for authenticated user', userError?.message);
+      await supabase.auth.signOut();
+      return { user: null, error: 'User profile not found' };
+    }
+
+    // Check if account is active
+    if (!userData.is_active) {
       logAuth('Account is deactivated');
+      await supabase.auth.signOut();
       return { user: null, error: 'Your account has been deactivated. Please contact an administrator.' };
     }
 
-    // Check maintenance mode & login controls based on role (admins always bypass)
+    // Check maintenance mode and login controls for non-admins
     try {
       const { data: appSettings } = await supabase
         .from('app_settings')
@@ -114,42 +70,32 @@ export async function signIn(email: string, password: string) {
         .single();
 
       if (appSettings) {
-        if (appSettings.maintenance_mode && userCheck.role !== 'admin') {
-          logAuth('Maintenance mode blocked non-admin user:', userCheck.role);
+        if (appSettings.maintenance_mode && userData.role !== 'admin') {
+          logAuth('Maintenance mode blocked non-admin user:', userData.role);
+          await supabase.auth.signOut();
           return {
             user: null,
             error: appSettings.maintenance_message || 'The app is currently under maintenance. Please try again later.'
           };
         }
 
-        if (userCheck.role === 'student' && appSettings.allow_student_login === false) {
-          logAuth('Student login is disabled');
+        if (userData.role === 'student' && appSettings.allow_student_login === false) {
+          await supabase.auth.signOut();
           return { user: null, error: 'Student login is currently disabled. Please contact your administrator.' };
         }
-        if (userCheck.role === 'teacher' && appSettings.allow_teacher_login === false) {
-          logAuth('Teacher login is disabled');
+
+        if (userData.role === 'teacher' && appSettings.allow_teacher_login === false) {
+          await supabase.auth.signOut();
           return { user: null, error: 'Teacher login is currently disabled. Please contact your administrator.' };
         }
       }
     } catch (settingsError) {
-      logAuth('Could not check login controls', settingsError);
+      logAuth('Could not check app settings', settingsError);
     }
 
-    // Check password (simple comparison for now)
-    if (userCheck.password_hash !== password) {
-      logAuth('Password mismatch');
-      return { user: null, error: 'Invalid email or password' };
-    }
-
-    // User is valid and active
-    logAuth('Login successful', { id: userCheck.id, role: userCheck.role });
-    const userData = userCheck;
-
-    // Store user session
+    logAuth('Login successful', { id: userData.id, role: userData.role });
     await AsyncStorage.setItem('current_user', JSON.stringify(userData));
-
-    return { user: userData as User, error: null };
-    
+    return { user: toUser(userData), error: null };
   } catch (error) {
     logAuth('Sign in error', error);
     return { user: null, error: 'Authentication failed. Please try again.' };
@@ -159,93 +105,51 @@ export async function signIn(email: string, password: string) {
 export async function getCurrentUser(): Promise<User | null> {
   try {
     logAuth('Getting current user');
-    
-    // Clear any legacy test admin session key
-    try {
-      await AsyncStorage.removeItem('test_admin_session');
-    } catch (_) {}
 
-    // Check for regular user session
-    const currentUser = await AsyncStorage.getItem('current_user');
-    if (currentUser) {
-      const user = JSON.parse(currentUser) as User;
-      
-      // If legacy test-admin was stored, wipe it out immediately
-      if (user.id === 'test-admin-id') {
-        logAuth('Wiping legacy test admin session');
-        await AsyncStorage.removeItem('current_user');
-        return null;
-      }
+    await AsyncStorage.removeItem('test_admin_session').catch(() => {});
 
-      logAuth('Local user session found', { id: user.id, role: user.role });
-
-      // Verify the user is still active in the database.
-      // IMPORTANT: only clear the session if we get a definitive "not active"
-      // result. Transient errors (network blips, timeouts) must NOT log the
-      // user out — return the cached user instead.
-      try {
-        const { data: userData, error } = await supabase
-          .from('app_users')
-          .select('*, school:schools(id, name)')
-          .eq('id', user.id)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        if (error) {
-          // Database error — keep the cached session, don't log out.
-          logAuth('DB check error, keeping cached session', error.message);
-          return user;
-        }
-
-        if (!userData) {
-          // Query succeeded but returned no rows → user is deactivated or deleted.
-          logAuth('User no longer active, clearing session');
-          await AsyncStorage.removeItem('current_user');
-          return null;
-        }
-
-        // Update local session with fresh data
-        await AsyncStorage.setItem('current_user', JSON.stringify(userData));
-        return userData as User;
-      } catch (dbError) {
-        logAuth('Database check failed, using cached user', dbError);
-        // Return cached user if database check fails (offline scenario)
-        return user;
-      }
+    // A local profile cache is not proof of authentication. Verify the session
+    // with Supabase Auth, then load the role from the trusted app_users row.
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    const authUserId = authData.user?.id;
+    if (authError || !authUserId) {
+      logAuth('No verified Supabase Auth user', authError?.message);
+      await AsyncStorage.removeItem('current_user').catch(() => {});
+      return null;
     }
 
-    // Check if user is logged in via Supabase Auth
-    try {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (authUser) {
-        logAuth('Supabase auth user found', authUser.id);
-        
-        // Try to get user from app_users table
-        const { data: userData, error } = await supabase
-          .from('app_users')
-          .select('*, school:schools(id, name)')
-          .eq('id', authUser.id)
-          .eq('is_active', true)
-          .single();
+    const { data: userData, error: profileError } = await supabase
+      .from('app_users')
+      .select(PROFILE_COLUMNS)
+      .eq('id', authUserId)
+      .maybeSingle();
 
-        if (userData) {
-          logAuth('Auth user profile found', userData.role);
-          // Store in local session for faster access
-          await AsyncStorage.setItem('current_user', JSON.stringify(userData));
-          return userData as User;
-        } else {
-          logAuth('Auth user has no profile');
-        }
-      }
-    } catch (authError) {
-      logAuth('Supabase auth check failed', authError);
+    if (profileError) {
+      // Fail closed on profile lookup errors: a cached role must not grant access.
+      logAuth('Could not verify app profile', profileError.message);
+      await AsyncStorage.removeItem('current_user').catch(() => {});
+      return null;
     }
 
-    logAuth('No current user found');
-    return null;
-    
+    if (!userData || userData.is_active === false) {
+      logAuth('User profile missing or inactive; clearing session');
+      await supabase.auth.signOut();
+      await AsyncStorage.removeItem('current_user').catch(() => {});
+      return null;
+    }
+
+    if (!['admin', 'teacher', 'student', 'parent'].includes(String(userData.role).toLowerCase())) {
+      logAuth('Profile has an unsupported role');
+      await supabase.auth.signOut();
+      await AsyncStorage.removeItem('current_user').catch(() => {});
+      return null;
+    }
+
+    await AsyncStorage.setItem('current_user', JSON.stringify(userData));
+    return toUser(userData);
   } catch (error) {
     logAuth('Get current user error', error);
+    await AsyncStorage.removeItem('current_user').catch(() => {});
     return null;
   }
 }
@@ -253,7 +157,7 @@ export async function getCurrentUser(): Promise<User | null> {
 export async function signOut() {
   try {
     logAuth('Signing out');
-    
+
     // Clear all local storage
     try {
       await AsyncStorage.removeItem('test_admin_session');
@@ -285,12 +189,12 @@ export async function signOut() {
 export async function updateUserProfile(userId: string, updates: Partial<User>) {
   try {
     logAuth('Updating user profile', { userId, updates });
-    
+
     const { data, error } = await supabase
       .from('app_users')
       .update(updates)
       .eq('id', userId)
-      .select()
+      .select(PROFILE_COLUMNS)
       .single();
 
     if (error) throw error;
@@ -340,35 +244,35 @@ export async function checkUserActiveStatus(): Promise<boolean> {
 // Debug function to test authentication
 export async function debugAuth() {
   logAuth('=== AUTH DEBUG START ===');
-  
+
   try {
     // Test Supabase connection
     const { data: connectionTest, error: connectionError } = await supabase
       .from('schools')
       .select('count')
       .limit(1);
-    
+
     logAuth('Supabase connection', connectionError ? 'FAILED' : 'SUCCESS');
-    
+
     // Test current session
     const currentUser = await getCurrentUser();
     logAuth('Current user', currentUser ? `${currentUser.name} (${currentUser.role})` : 'None');
-    
+
     // Test database access
     const { data: users, error: usersError } = await supabase
       .from('app_users')
       .select('id, email, role, is_active')
       .limit(3);
-    
+
     logAuth('Users table access', usersError ? 'FAILED' : 'SUCCESS');
     if (users) {
       logAuth('Sample users', users);
     }
-    
+
   } catch (error) {
     logAuth('Debug error', error);
   }
-  
+
   logAuth('=== AUTH DEBUG END ===');
 }
 

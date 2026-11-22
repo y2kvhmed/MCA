@@ -10,7 +10,7 @@ interface Assignment {
 
 export class DueDateReminderService {
   private static instance: DueDateReminderService;
-  private reminderInterval: NodeJS.Timeout | null = null;
+  private reminderInterval: ReturnType<typeof setInterval> | null = null;
   private userId: string | null = null;
   private schoolId: string | null = null;
 

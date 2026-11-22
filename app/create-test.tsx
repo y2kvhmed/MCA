@@ -139,7 +139,7 @@ export default function CreateTest() {
               <Text style={styles.label}>Test Date</Text>
               <DateTimePicker
                 value={testDate}
-                onChange={setTestDate}
+                onChange={(date) => { if (date) setTestDate(date); }}
                 label=""
                 selectedLabel="Test date"
                 showTime={false}

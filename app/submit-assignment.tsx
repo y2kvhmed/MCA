@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { File as LocalFile } from 'expo-file-system';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { pickAssignmentFiles, captureAssignmentPhoto, uploadFileToSupabase, isImageFile, compressImageFile, FILE_CONFIG } from '../lib/fileUpload';
+import { pickAssignmentFiles, pickAssignmentImages, captureAssignmentPhoto, uploadFileToSupabase, isImageFile, compressImageFile, FILE_CONFIG } from '../lib/fileUpload';
 import { formatFileSize, formatDueDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -27,6 +27,15 @@ export default function SubmitAssignment() {
   const [preparing, setPreparing] = useState(false);
   const [viewerFiles, setViewerFiles] = useState<any[] | null>(null);
   const [viewerIndex, setViewerIndex] = useState(0);
+
+  const showSubmissionError = (title: string, error: any) => {
+    const message = error?.message || error?.error || String(error || 'Please try again.');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.alert(`${title}: ${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -87,15 +96,30 @@ export default function SubmitAssignment() {
     try {
       const enriched = await Promise.all(
         files.map(async (file: any) => {
-          const prepared = await compressImageFile(file);
-          let previewUri = prepared.uri;
+          const source = file?.uploadSource || file;
+          const prepared = await compressImageFile(source);
+          const name = prepared?.name || file?.name || file?.fileName || 'submission';
+          const type = prepared?.type || file?.type || file?.mimeType || '';
+          const rawSize = prepared?.size ?? file?.size ?? file?.fileSize;
+          const size = Number.isFinite(Number(rawSize)) ? Number(rawSize) : undefined;
+          let previewUri = prepared?.uri || file?.uri;
           if (!previewUri && typeof window !== 'undefined' && prepared instanceof Blob) {
             try { previewUri = URL.createObjectURL(prepared); } catch {}
           }
-          return { ...prepared, previewUri };
+          return {
+            uploadSource: prepared,
+            name,
+            type,
+            mimeType: type,
+            size,
+            uri: prepared?.uri || file?.uri,
+            previewUri,
+          };
         })
       );
       setSelectedFiles((prev) => [...prev, ...enriched]);
+    } catch (error) {
+      showSubmissionError('Could not prepare selected files', error);
     } finally {
       setPreparing(false);
     }
@@ -107,10 +131,23 @@ export default function SubmitAssignment() {
       if (result.success && result.files) {
         await prepareAndAdd(result.files);
       } else if (result.error && !/cancel/i.test(result.error) && !/No file was selected/i.test(result.error)) {
-        handleError(null, result.error);
+        showSubmissionError('Could not select files', result.error);
       }
     } catch (error: any) {
-      handleError(error, 'Failed to pick file');
+      showSubmissionError('Could not select files', error);
+    }
+  };
+
+  const handlePickImages = async () => {
+    try {
+      const result = await pickAssignmentImages();
+      if (result.success && result.files) {
+        await prepareAndAdd(result.files);
+      } else if (result.error && !/cancel/i.test(result.error)) {
+        showSubmissionError('Could not select photos', result.error);
+      }
+    } catch (error) {
+      showSubmissionError('Could not select photos', error);
     }
   };
 
@@ -120,10 +157,10 @@ export default function SubmitAssignment() {
       if (result.success && result.file) {
         await prepareAndAdd([result.file]);
       } else if (result.error && !/cancel/i.test(result.error)) {
-        handleError(null, result.error);
+        showSubmissionError('Could not capture photo', result.error);
       }
     } catch (error: any) {
-      handleError(error, 'Failed to capture photo');
+      showSubmissionError('Could not capture photo', error);
     }
   };
 
@@ -145,13 +182,13 @@ export default function SubmitAssignment() {
       return;
     }
     setSubmitting(true);
+    const uploaded: any[] = [];
     try {
       const isLate = assignment.due_date ? new Date() > new Date(assignment.due_date) : false;
 
       // Upload every attached file to storage.
-      const uploaded: any[] = [];
       for (const file of selectedFiles) {
-        const originalName = file.name || (file.file && file.file.name) || 'submission';
+        const originalName = file.name || file.fileName || file.uploadSource?.name || 'submission';
         const fileExt = originalName.split('.').pop() || 'bin';
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
         // Sorted by school / assignment / student so the bucket stays browsable.
@@ -172,8 +209,8 @@ export default function SubmitAssignment() {
           path: filePath,
           url: uploadResult.data!.publicUrl,
           name: originalName,
-          size: file.size || 0,
-          type: file.type || file.mimeType || (file.file && file.file.type) || '',
+          size: uploadResult.data!.size ?? file.size ?? 0,
+          type: file.type || file.mimeType || uploadResult.data!.type || '',
         });
       }
 
@@ -220,13 +257,25 @@ export default function SubmitAssignment() {
         await supabase.storage
           .from(FILE_CONFIG.buckets.assignments)
           .remove(uploaded.map((u) => u.path));
+        uploaded.length = 0;
+        if (/column .*files.* does not exist/i.test(submissionError.message)) {
+          throw new Error(
+            'The database is missing support for multiple submission files. Apply SUBMISSION-MULTIPLE-FILES.sql in Supabase SQL Editor, then try again.'
+          );
+        }
         throw new Error(`Could not save submission record: ${submissionError.message}`);
       }
 
       showSuccess(existingSubmission ? 'Assignment resubmitted successfully!' : 'Assignment submitted successfully!');
       handleBack();
     } catch (error: any) {
-      handleError(error, 'Failed to submit assignment');
+      if (uploaded.length > 0) {
+        await supabase.storage
+          .from(FILE_CONFIG.buckets.assignments)
+          .remove(uploaded.map((file) => file.path))
+          .catch((cleanupError) => console.warn('Could not clean up partial upload:', cleanupError));
+      }
+      showSubmissionError('Failed to submit assignment', error);
     } finally {
       setSubmitting(false);
     }
@@ -404,7 +453,12 @@ export default function SubmitAssignment() {
             <Text style={styles.uploadText}>
               {preparing ? 'Preparing…' : selectedFiles.length > 0 ? 'Add more' : 'Add attachment'}
             </Text>
-            <Text style={styles.uploadSubtext}>Tap to select PDF or photos</Text>
+            <Text style={styles.uploadSubtext}>Tap to select one or more files</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.cameraButton} onPress={handlePickImages} disabled={preparing}>
+            <Ionicons name="images-outline" size={20} color={Colors.primary} />
+            <Text style={styles.cameraButtonText}>Choose multiple photos</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.cameraButton} onPress={handleTakePhoto} disabled={preparing}>

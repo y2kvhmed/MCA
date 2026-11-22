@@ -29,6 +29,28 @@ export const getStatusMeta = (val: string) => {
   return { label: val || 'Present', color: Colors.success, icon: 'checkmark-circle' };
 };
 
+/** Today's date (YYYY-MM-DD) in the school's timezone — must match the online-attendance API. */
+const todayCairoDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' });
+
+/** "16:00" -> "16:00:00" (Postgres TIME). Null when the input is not a valid HH:MM. */
+const normalizeTimeInput = (value: string): string | null => {
+  const match = /^(\d{1,2}):(\d{2})$/.exec((value || '').trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+};
+
+/** " · 16:00–17:00" for an online sheet, or '' when no window is set. */
+const formatTimeRange = (start?: string | null, end?: string | null): string => {
+  const short = (t?: string | null) => (t ? t.slice(0, 5) : '');
+  const s = short(start);
+  const e = short(end);
+  if (!s && !e) return '';
+  return ` · ${s}${e ? `–${e}` : ''}`;
+};
+
 export default function Attendance() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -47,10 +69,13 @@ export default function Attendance() {
   const [showEditor, setShowEditor] = useState(false);
   const [editingSheet, setEditingSheet] = useState<any>(null);
   const [selectedSchool, setSelectedSchool] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(todayCairoDate());
   const [students, setStudents] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<Map<string, { status: string; note: string }>>(new Map());
   const [saving, setSaving] = useState(false);
+  const [sessionType, setSessionType] = useState<'onsite' | 'online'>('onsite');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
 
   useEffect(() => {
     loadData();
@@ -93,7 +118,7 @@ export default function Attendance() {
         setSelectedSchool(schoolsList[0].id);
       }
 
-      await loadAttendanceSheets(currentUser.id, currentUser.role);
+      await loadAttendanceSheets(currentUser.id, currentUser.role, schoolsList.map((s: any) => s.id));
     } catch (error) {
       handleError(error, 'Failed to load data');
     } finally {
@@ -102,7 +127,7 @@ export default function Attendance() {
     }
   };
 
-  const loadAttendanceSheets = async (userId: string, role: string) => {
+  const loadAttendanceSheets = async (userId: string, role: string, schoolIds: string[] = []) => {
     try {
       let query = supabase
         .from('attendance_sheets')
@@ -113,7 +138,15 @@ export default function Attendance() {
         .order('date', { ascending: false });
 
       if (role !== 'admin') {
-        query = query.eq('teacher_id', userId);
+        // A teacher sees the sheets they created, plus the automatic ONLINE sheets
+        // for every school they teach (those have no owning teacher).
+        if (schoolIds.length > 0) {
+          query = query.or(
+            `teacher_id.eq.${userId},and(session_type.eq.online,school_id.in.(${schoolIds.join(',')}))`
+          );
+        } else {
+          query = query.eq('teacher_id', userId);
+        }
       }
 
       const { data, error } = await query;
@@ -140,11 +173,18 @@ export default function Attendance() {
       setEditingSheet(sheet);
       setSelectedSchool(sheet.school_id);
       setSelectedDate(sheet.date);
+      const isOnlineSheet = sheet.session_type === 'online';
+      setSessionType(isOnlineSheet ? 'online' : 'onsite');
+      setStartTime(isOnlineSheet && sheet.start_time ? String(sheet.start_time).slice(0, 5) : '');
+      setEndTime(isOnlineSheet && sheet.end_time ? String(sheet.end_time).slice(0, 5) : '');
       await loadSheetAttendance(sheet.id);
       await loadStudents(sheet.school_id);
     } else {
       setEditingSheet(null);
-      setSelectedDate(new Date().toISOString().split('T')[0]);
+      setSelectedDate(todayCairoDate());
+      setSessionType('onsite');
+      setStartTime('');
+      setEndTime('');
       setAttendance(new Map());
       const targetSchool = selectedSchool || (schools[0]?.id || '');
       if (targetSchool) {
@@ -225,6 +265,23 @@ export default function Attendance() {
       return;
     }
 
+    const isOnline = sessionType === 'online';
+    let lessonStart: string | null = null;
+    let lessonEnd: string | null = null;
+
+    if (isOnline) {
+      lessonStart = normalizeTimeInput(startTime);
+      lessonEnd = normalizeTimeInput(endTime);
+      if (!lessonStart || !lessonEnd) {
+        Alert.alert('Error', 'Enter the lesson start and end time as HH:MM (24-hour), e.g. 16:00.');
+        return;
+      }
+      if (lessonEnd <= lessonStart) {
+        Alert.alert('Error', 'The end time must be after the start time.');
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       hapticFeedback.medium();
@@ -237,36 +294,83 @@ export default function Attendance() {
             teacher_id: user.id,
             school_id: selectedSchool,
             date: selectedDate,
+            session_type: sessionType,
+            start_time: lessonStart,
+            end_time: lessonEnd,
           })
           .select()
           .single();
 
-        if (sheetError) throw sheetError;
+        if (sheetError) {
+          if ((sheetError as any).code === '23505') {
+            Alert.alert(
+              'Sheet already exists',
+              isOnline
+                ? 'An online lesson sheet already exists for this school on this date. Open it from the list to change its times.'
+                : 'You already have an attendance sheet for this school on this date.'
+            );
+            return;
+          }
+          throw sheetError;
+        }
         sheetId = newSheet.id;
+      } else if (isOnline) {
+        // Adjusting the lesson window of an existing online sheet. Never touches the
+        // records, so joins already recorded are preserved.
+        const { error: updateError } = await supabase
+          .from('attendance_sheets')
+          .update({
+            school_id: selectedSchool,
+            date: selectedDate,
+            start_time: lessonStart,
+            end_time: lessonEnd,
+          })
+          .eq('id', sheetId);
+
+        if (updateError) throw updateError;
       }
 
-      await supabase.from('attendance_records').delete().eq('sheet_id', sheetId);
+      if (isOnline) {
+        // Online attendance is driven by students pressing Join Online Lesson, so fill
+        // in the students who have no record yet as Absent. ignoreDuplicates keeps any
+        // status a student already earned by joining.
+        const absentRecords = students.map((s: any) => ({
+          sheet_id: sheetId,
+          student_id: s.id,
+          status: 'absent',
+        }));
 
-      const records = Array.from(attendance.entries()).map(([studentId, data]) => ({
-        sheet_id: sheetId,
-        student_id: studentId,
-        status: data.status || 'present',
-        note: data.note || null,
-      }));
+        if (absentRecords.length > 0) {
+          const { error: seedError } = await supabase
+            .from('attendance_records')
+            .upsert(absentRecords, { onConflict: 'sheet_id,student_id', ignoreDuplicates: true });
 
-      if (records.length > 0) {
-        const { error: recordsError } = await supabase
-          .from('attendance_records')
-          .insert(records);
+          if (seedError) throw seedError;
+        }
+      } else {
+        await supabase.from('attendance_records').delete().eq('sheet_id', sheetId);
 
-        if (recordsError) throw recordsError;
+        const records = Array.from(attendance.entries()).map(([studentId, data]) => ({
+          sheet_id: sheetId,
+          student_id: studentId,
+          status: data.status || 'present',
+          note: data.note || null,
+        }));
+
+        if (records.length > 0) {
+          const { error: recordsError } = await supabase
+            .from('attendance_records')
+            .insert(records);
+
+          if (recordsError) throw recordsError;
+        }
       }
 
       hapticFeedback.success();
-      showSuccess('Attendance saved successfully!');
+      showSuccess(isOnline ? 'Online lesson sheet created!' : 'Attendance saved successfully!');
       closeEditor();
       if (user) {
-        await loadAttendanceSheets(user.id, user.role);
+        await loadAttendanceSheets(user.id, user.role, schools.map((s: any) => s.id));
       }
     } catch (error) {
       hapticFeedback.error();
@@ -428,6 +532,27 @@ export default function Attendance() {
             ))}
           </ScrollView>
 
+          {/* Lesson Type */}
+          <Text style={styles.label}>Lesson type</Text>
+          <View style={styles.typeRow}>
+            <TouchableOpacity
+              style={[styles.schoolChip, sessionType === 'onsite' && styles.schoolChipSelected]}
+              onPress={() => setSessionType('onsite')}
+            >
+              <Text style={[styles.schoolChipText, sessionType === 'onsite' && styles.schoolChipTextSelected]}>
+                Normal attendance
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.schoolChip, sessionType === 'online' && styles.schoolChipSelected]}
+              onPress={() => setSessionType('online')}
+            >
+              <Text style={[styles.schoolChipText, sessionType === 'online' && styles.schoolChipTextSelected]}>
+                Online lesson
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Date Selector */}
           <Text style={styles.label}>Date</Text>
           <TextInput
@@ -438,6 +563,35 @@ export default function Attendance() {
             placeholderTextColor={Colors.text.tertiary}
           />
 
+          {sessionType === 'online' ? (
+            <>
+              <Text style={styles.label}>Start time</Text>
+              <TextInput
+                style={styles.dateInput}
+                value={startTime}
+                onChangeText={setStartTime}
+                placeholder="HH:MM (24h, e.g. 16:00)"
+                placeholderTextColor={Colors.text.tertiary}
+              />
+
+              <Text style={styles.label}>End time</Text>
+              <TextInput
+                style={styles.dateInput}
+                value={endTime}
+                onChangeText={setEndTime}
+                placeholder="HH:MM (24h, e.g. 17:00)"
+                placeholderTextColor={Colors.text.tertiary}
+              />
+
+              <View style={styles.emptyStudentsBox}>
+                <Text style={styles.emptyStudentsText}>
+                  {students.length} students in this school are marked Absent automatically, and become Present
+                  when they press Join Online Lesson between these times.
+                </Text>
+              </View>
+            </>
+          ) : (
+            <>
           {/* Students List */}
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.label}>Students ({students.length})</Text>
@@ -521,10 +675,16 @@ export default function Attendance() {
               );
             })
           )}
+            </>
+          )}
         </ScrollView>
 
         <View style={styles.footer}>
-          <Button title={saving ? 'Saving...' : 'Save Attendance Sheet'} onPress={saveAttendance} loading={saving} />
+          <Button
+            title={saving ? 'Saving...' : sessionType === 'online' ? 'Create Online Lesson Sheet' : 'Save Attendance Sheet'}
+            onPress={saveAttendance}
+            loading={saving}
+          />
         </View>
       </SafeAreaView>
     );
@@ -617,6 +777,14 @@ export default function Attendance() {
                       })}
                     </Text>
                     <Text style={styles.sheetSchool}>{sheet.school?.name || 'Assigned School'}</Text>
+                    {sheet.session_type === 'online' && (
+                      <View style={styles.onlineBadge}>
+                        <Ionicons name="videocam" size={12} color={Colors.primary} />
+                        <Text style={styles.onlineBadgeText}>
+                          Online{formatTimeRange(sheet.start_time, sheet.end_time)}
+                        </Text>
+                      </View>
+                    )}
                   </View>
 
                   <View style={styles.sheetActions}>
@@ -668,6 +836,14 @@ export default function Attendance() {
                   })}
                 </Text>
                 <Text style={styles.modalHeaderSubtitle}>{viewingSheet.school?.name || 'School'}</Text>
+                {viewingSheet.session_type === 'online' && (
+                  <View style={styles.onlineBadge}>
+                    <Ionicons name="videocam" size={12} color={Colors.primary} />
+                    <Text style={styles.onlineBadgeText}>
+                      Online Lesson{formatTimeRange(viewingSheet.start_time, viewingSheet.end_time)}
+                    </Text>
+                  </View>
+                )}
               </View>
               <TouchableOpacity
                 onPress={() => exportSheetCSV(viewingSheet, viewingRecords)}
@@ -779,6 +955,13 @@ const styles = StyleSheet.create({
   headerSaveBtn: { padding: Spacing.xs },
   headerExportBtn: { padding: Spacing.xs },
   headerTitle: { fontSize: 20, fontWeight: 'bold', color: Colors.text.primary },
+  onlineBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
+    marginTop: Spacing.xs, paddingHorizontal: Spacing.sm, paddingVertical: 2,
+    borderRadius: 10, backgroundColor: Colors.primary + '15',
+  },
+  onlineBadgeText: { fontSize: 11, fontWeight: '600', color: Colors.primary },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.sm },
   content: { flex: 1, padding: Spacing.lg },
   editorContent: { flex: 1, padding: Spacing.lg },
   label: { fontSize: 14, fontWeight: '600', color: Colors.text.primary, marginBottom: Spacing.sm, marginTop: Spacing.md },

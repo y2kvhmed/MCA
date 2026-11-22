@@ -16,9 +16,11 @@ export const FILE_CONFIG = {
     'image/png',
     'image/webp',
     'image/gif',
+    'image/heic',
+    'image/heif',
     'text/plain',
   ],
-  allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'txt'],
+  allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif', 'txt'],
   // Student submissions: PDF or photos only.
   submissionTypes: [
     'application/pdf',
@@ -26,8 +28,10 @@ export const FILE_CONFIG = {
     'image/png',
     'image/webp',
     'image/gif',
+    'image/heic',
+    'image/heif',
   ],
-  submissionExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif'],
+  submissionExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'],
   buckets: {
     assignments: 'submissions',
     profiles: 'user-profiles',
@@ -46,16 +50,17 @@ export function validateFile(
     return { isValid: false, error: 'No file selected' };
   }
 
-  if (file.size && file.size > FILE_CONFIG.maxSizeBytes) {
+  const size = Number(file.size ?? file.fileSize);
+  if (Number.isFinite(size) && size > FILE_CONFIG.maxSizeBytes) {
     return { 
       isValid: false, 
       error: `File size must be less than ${FILE_CONFIG.maxSizeBytes / (1024 * 1024)}MB` 
     };
   }
 
-  const name = file.name || file.fileName || '';
+  const name = file.name || file.fileName || file.uploadSource?.name || '';
   const ext = name.split('.').pop()?.toLowerCase();
-  const rawType = file.mimeType || file.type || 'unknown';
+  const rawType = file.mimeType || file.type || file.uploadSource?.type || '';
   const isMimeAllowed = allowedTypes.includes(rawType);
   const isExtAllowed = ext && allowedExtensions.includes(ext);
 
@@ -71,9 +76,90 @@ export function validateFile(
 
 // True when the file is an image (by mime type or extension).
 export function isImageFile(file: any): boolean {
-  const type = file?.type || file?.mimeType || '';
-  const name = file?.name || '';
-  return type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic)$/i.test(name);
+  const type = file?.type || file?.mimeType || file?.uploadSource?.type || '';
+  const name = file?.name || file?.fileName || file?.uploadSource?.name || '';
+  return type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(name);
+}
+
+function normalizeSubmissionAsset(asset: any): any {
+  const source = asset?.uploadSource || asset;
+  const uri = asset?.uri || source?.uri;
+  const uriName = typeof uri === 'string' ? uri.split(/[?#]/)[0].split('/').pop() : '';
+  const initialName = source?.name || asset?.name || asset?.fileName || uriName;
+  const initialExtension = initialName?.split('.').pop()?.toLowerCase();
+  const inferredTypeByExtension: Record<string, string> = {
+    pdf: 'application/pdf',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    heic: 'image/heic',
+    heif: 'image/heif',
+  };
+  const type =
+    source?.type ||
+    asset?.type ||
+    asset?.mimeType ||
+    inferredTypeByExtension[initialExtension || ''] ||
+    '';
+  const inferredExtension =
+    type === 'image/jpeg' ? 'jpg' :
+    type.startsWith('image/') ? type.split('/')[1] :
+    type === 'application/pdf' ? 'pdf' : 'bin';
+  const name =
+    initialName ||
+    `submission-${Date.now()}.${inferredExtension}`;
+  const rawSize = source?.size ?? asset?.size ?? asset?.fileSize;
+  const size = Number.isFinite(Number(rawSize)) ? Number(rawSize) : undefined;
+
+  // Keep native File/Blob instances intact; spreading one drops its byte methods.
+  if (
+    typeof Blob !== 'undefined' &&
+    source instanceof Blob &&
+    typeof source.arrayBuffer === 'function'
+  ) {
+    return {
+      uploadSource: source,
+      name,
+      type,
+      mimeType: type,
+      size,
+      uri,
+    };
+  }
+
+  return {
+    ...asset,
+    uploadSource: source,
+    name,
+    type,
+    mimeType: type,
+    size,
+    uri,
+  };
+}
+
+async function readSubmissionFile(file: any): Promise<ArrayBuffer> {
+  const source = file?.uploadSource || file?.file || file;
+  if (source && typeof source.arrayBuffer === 'function') {
+    return source.arrayBuffer();
+  }
+
+  const uri = source?.uri || file?.uri;
+  if (!uri) {
+    throw new Error(`The selected file "${file?.name || 'file'}" has no readable URI.`);
+  }
+
+  if (typeof window !== 'undefined') {
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error(`Could not read the selected file (${response.status}). Please select it again.`);
+    }
+    return response.arrayBuffer();
+  }
+
+  return new LocalFile(uri).arrayBuffer();
 }
 
 // Downscale + re-encode a picked photo before upload to keep uploads small.
@@ -139,20 +225,22 @@ export async function uploadFileToSupabase(
   filePath: string
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
-    let fileData: ArrayBuffer;
-
-    if (typeof window !== 'undefined') {
-      // Web: file is already a File object
-      fileData = await file.arrayBuffer();
-    } else {
-      // Mobile: React Native cannot read `file://` URIs through fetch, so read the bytes off disk.
-      fileData = await new LocalFile(file.uri).arrayBuffer();
+    const fileData = await readSubmissionFile(file);
+    if (fileData.byteLength > FILE_CONFIG.maxSizeBytes) {
+      return {
+        success: false,
+        error: `File exceeds the ${FILE_CONFIG.maxSizeBytes / (1024 * 1024)}MB per-file limit.`,
+      };
     }
+
+    const name = file?.name || file?.fileName || file?.uploadSource?.name || 'submission';
+    const contentType =
+      file?.mimeType || file?.type || file?.uploadSource?.type || 'application/octet-stream';
 
     const { data, error } = await supabase.storage
       .from(bucket)
       .upload(filePath, fileData, {
-        contentType: file.mimeType || file.type,
+        contentType,
         upsert: false
       });
 
@@ -171,12 +259,21 @@ export async function uploadFileToSupabase(
       data: {
         path: data.path,
         fullPath: data.fullPath,
-        publicUrl: urlData.publicUrl
+        publicUrl: urlData.publicUrl,
+        size: fileData.byteLength,
+        name,
+        type: contentType,
       }
     };
   } catch (error) {
     console.error('File upload error:', error);
-    return { success: false, error: 'Failed to upload file' };
+    const detail =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+        ? error
+        : 'Unknown file read or storage error';
+    return { success: false, error: detail };
   }
 }
 
@@ -348,7 +445,7 @@ export async function pickAssignmentFiles(): Promise<{ success: boolean; files?:
         };
 
         input.onchange = (event: any) => {
-          const picked: any[] = Array.from(event.target.files || []);
+          const picked: any[] = Array.from(event.target.files || []).map(normalizeSubmissionAsset);
           if (picked.length === 0) {
             finish({ success: false, error: 'No file was selected' });
             return;
@@ -384,7 +481,7 @@ export async function pickAssignmentFiles(): Promise<{ success: boolean; files?:
         return { success: false, error: 'File selection cancelled' };
       }
 
-      const files = (result.assets || []).filter(Boolean);
+      const files = (result.assets || []).filter(Boolean).map(normalizeSubmissionAsset);
       if (files.length === 0) {
         return { success: false, error: 'Picker returned no file asset' };
       }
@@ -400,6 +497,93 @@ export async function pickAssignmentFiles(): Promise<{ success: boolean; files?:
   } catch (error: any) {
     console.error('File picker error:', error);
     return { success: false, error: `Failed to pick file: ${error?.message || String(error)}` };
+  }
+}
+
+export async function pickAssignmentImages(): Promise<{ success: boolean; files?: any[]; error?: string }> {
+  try {
+    if (typeof window !== 'undefined') {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = true;
+        input.style.position = 'fixed';
+        input.style.left = '-9999px';
+        input.style.opacity = '0';
+
+        const finish = (result: { success: boolean; files?: any[]; error?: string }) => {
+          input.parentNode?.removeChild(input);
+          resolve(result);
+        };
+
+        input.onchange = (event: any) => {
+          const files = Array.from(event.target.files || []).map(normalizeSubmissionAsset);
+          if (!files.length) {
+            finish({ success: false, error: 'No photos were selected' });
+            return;
+          }
+          for (const file of files) {
+            const validation = validateFile(
+              file,
+              FILE_CONFIG.submissionTypes,
+              FILE_CONFIG.submissionExtensions
+            );
+            if (!validation.isValid) {
+              finish({ success: false, error: validation.error });
+              return;
+            }
+          }
+          finish({ success: true, files });
+        };
+
+        input.addEventListener('cancel', () =>
+          finish({ success: false, error: 'Photo selection cancelled' })
+        );
+        document.body.appendChild(input);
+        input.click();
+      });
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      return { success: false, error: 'Photo library permission denied' };
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: 0,
+      quality: 1,
+    });
+
+    if (result.canceled) {
+      return { success: false, error: 'Photo selection cancelled' };
+    }
+
+    const files = (result.assets || []).map(normalizeSubmissionAsset);
+    if (!files.length) {
+      return { success: false, error: 'Photo picker returned no images' };
+    }
+
+    for (const file of files) {
+      const validation = validateFile(
+        file,
+        FILE_CONFIG.submissionTypes,
+        FILE_CONFIG.submissionExtensions
+      );
+      if (!validation.isValid) {
+        return { success: false, error: validation.error };
+      }
+    }
+
+    return { success: true, files };
+  } catch (error: any) {
+    console.error('Photo picker error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Could not select photos.',
+    };
   }
 }
 

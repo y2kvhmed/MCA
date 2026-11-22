@@ -6,6 +6,7 @@ import { ThemeProvider } from '../contexts/ThemeContext';
 import { ToastProvider } from '../contexts/ToastContext';
 import { NotificationProvider } from '../contexts/NotificationContext';
 import NetworkStatus from '../components/NetworkStatus';
+import RouteAccessGuard from '../components/RouteAccessGuard';
 import { registerForPushNotificationsAsync, savePushToken } from '../lib/notifications';
 import { getCurrentUser, checkUserActiveStatus } from '../lib/auth';
 import { Ionicons } from '@expo/vector-icons';
@@ -180,32 +181,34 @@ export default function RootLayout() {
           <NotificationProvider>
             <SafeAreaProvider>
               <NetworkStatus />
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="index" />
-                <Stack.Screen name="welcome" />
-                <Stack.Screen name="login" />
-                <Stack.Screen name="(tabs)" />
-                <Stack.Screen name="create-school" />
-                <Stack.Screen name="create-user" />
-                <Stack.Screen name="view-users" />
-                <Stack.Screen name="student-materials" />
-                <Stack.Screen name="settings" />
-                <Stack.Screen name="student-assignments" />
-                <Stack.Screen name="create-assignment" />
-                <Stack.Screen name="materials-list" />
-                <Stack.Screen name="assignment-details" />
-                <Stack.Screen name="edit-assignment" />
-                <Stack.Screen name="delete-assignment" />
-                <Stack.Screen name="assignment-submissions" />
-                <Stack.Screen name="teacher-assignments" />
-                <Stack.Screen name="student-assignment-list" />
-                <Stack.Screen name="submit-assignment" />
-                <Stack.Screen name="attendance" />
-                <Stack.Screen name="notes" />
-                <Stack.Screen name="notifications" />
-                <Stack.Screen name="add-recording" />
-                <Stack.Screen name="change-password" />
-              </Stack>
+              <RouteAccessGuard>
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="welcome" />
+                  <Stack.Screen name="login" />
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen name="create-school" />
+                  <Stack.Screen name="create-user" />
+                  <Stack.Screen name="view-users" />
+                  <Stack.Screen name="student-materials" />
+                  <Stack.Screen name="settings" />
+                  <Stack.Screen name="student-assignments" />
+                  <Stack.Screen name="create-assignment" />
+                  <Stack.Screen name="materials-list" />
+                  <Stack.Screen name="assignment-details" />
+                  <Stack.Screen name="edit-assignment" />
+                  <Stack.Screen name="delete-assignment" />
+                  <Stack.Screen name="assignment-submissions" />
+                  <Stack.Screen name="teacher-assignments" />
+                  <Stack.Screen name="student-assignment-list" />
+                  <Stack.Screen name="submit-assignment" />
+                  <Stack.Screen name="attendance" />
+                  <Stack.Screen name="notes" />
+                  <Stack.Screen name="notifications" />
+                  <Stack.Screen name="add-recording" />
+                  <Stack.Screen name="change-password" />
+                </Stack>
+              </RouteAccessGuard>
 
               {/* Maintenance Mode Full Screen Blocker for Logged-In Non-Admins Only */}
               {maintenanceActive && userRole && userRole !== 'admin' && (

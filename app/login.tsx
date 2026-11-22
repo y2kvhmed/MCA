@@ -64,6 +64,8 @@ export default function Login() {
         router.replace('/(tabs)/teacher-dashboard');
       } else if (user.role === 'student') {
         router.replace('/(tabs)/student-dashboard');
+      } else {
+        router.replace('/welcome');
       }
     } catch (error) {
       setErrorMessage('An unexpected error occurred');

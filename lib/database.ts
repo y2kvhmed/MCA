@@ -928,10 +928,10 @@ export async function getLessonById(lessonId: string) {
 // Get real school statistics
 export async function getSchoolStats(schoolId: string) {
   try {
-    // Get student count
-    const { data: students } = await supabase
+    // Exact counts are not capped by PostgREST's per-request row limit.
+    const { count: studentCount } = await supabase
       .from('app_users')
-      .select('id')
+      .select('id', { count: 'exact', head: true })
       .eq('school_id', schoolId)
       .eq('role', 'student')
       .eq('is_active', true);
@@ -957,7 +957,7 @@ export async function getSchoolStats(schoolId: string) {
       .in('uploaded_by', teachers?.map(t => t.id) || []);
 
     return {
-      totalStudents: students?.length || 0,
+      totalStudents: studentCount || 0,
       totalTeachers: teachers?.length || 0,
       myAssignments: assignments?.length || 0,
       materialsSent: materials?.length || 0,
@@ -990,26 +990,26 @@ export async function getTeacherSchoolStats(teacherId: string) {
       const [studentsRes, teachersRes, materialsRes, testsRes] = await Promise.all([
         supabase
           .from('app_users')
-          .select('id')
+          .select('id', { count: 'exact', head: true })
           .in('school_id', schoolIds)
           .eq('role', 'student')
           .eq('is_active', true),
         supabase
           .from('app_users')
-          .select('id')
+          .select('id', { count: 'exact', head: true })
           .in('school_id', schoolIds)
           .eq('role', 'teacher')
           .eq('is_active', true),
-        supabase.from('study_materials').select('id').in('school_id', schoolIds),
+        supabase.from('study_materials').select('id', { count: 'exact', head: true }).in('school_id', schoolIds),
         // Count the tests themselves (not one row per student result), so a test
         // taken by many students still counts as a single test.
-        supabase.from('tests').select('id').in('school_id', schoolIds),
+        supabase.from('tests').select('id', { count: 'exact', head: true }).in('school_id', schoolIds),
       ]);
 
-      totalStudents = studentsRes.data?.length || 0;
-      totalTeachers = teachersRes.data?.length || 0;
-      materialsSent = materialsRes.data?.length || 0;
-      totalTests = testsRes.data?.length || 0;
+      totalStudents = studentsRes.count || 0;
+      totalTeachers = teachersRes.count || 0;
+      materialsSent = materialsRes.count || 0;
+      totalTests = testsRes.count || 0;
     }
 
     // Assignments use the same school-wide source as the School Assignments screen
@@ -1356,6 +1356,9 @@ export async function getMessagesByClass(schoolOrClassId: string) {
 
 
 // ============= STATISTICS =============
+// Supabase Auth's auth.users table is intentionally not client-readable.
+// The Auth bridge keeps the same UUIDs in app_users, which remains the safe
+// source for profile, role, school, and student counters.
 export async function getAdminStats() {
   const [schools, users, assignments, students] = await Promise.all([
     supabase.from('schools').select('id', { count: 'exact', head: true }),
@@ -2156,7 +2159,7 @@ export async function saveBulkTestResults(results: Array<{
   test_date: string;
   score: number;
   max_score: number;
-  notes?: string;
+  notes?: string | null;
 }>) {
   try {
     // 1. Delete existing results for this test if any (to avoid duplicates on re-save)
@@ -2383,4 +2386,3 @@ export async function getStudentAttendanceSummary(studentId: string) {
     };
   }
 }
-

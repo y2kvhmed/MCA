@@ -122,7 +122,9 @@ export default function AssignmentSubmissions() {
             student.email || '',
             submission ? 'Submitted' : 'Missing',
             submission?.submitted_at ? new Date(submission.submitted_at).toLocaleString() : '',
-            submission?.file_name || '',
+            Array.isArray(submission?.files) && submission.files.length
+              ? submission.files.map((file: any) => file.name).filter(Boolean).join('; ')
+              : submission?.file_name || '',
           ].map(v => `"${v}"`).join(',');
         })
       ].join('\n');
@@ -142,11 +144,11 @@ export default function AssignmentSubmissions() {
     }
   };
 
-  const openSubmissionFile = async (submission: any) => {
+  const openSubmissionFile = async (file: any) => {
     try {
-      console.log('Opening submission file:', submission);
+      console.log('Opening submission file:', file);
       
-      let filePath = submission.file_path || '';
+      let filePath = file.path || file.file_path || '';
       if (filePath.startsWith('http')) {
         const parts = filePath.split('/submissions/');
         if (parts.length > 1) {
@@ -158,7 +160,7 @@ export default function AssignmentSubmissions() {
       }
 
       // 1. Direct stored URL
-      let fileUrl = submission.file_url || '';
+      let fileUrl = file.url || file.file_url || '';
 
       // 2. Or public storage URL from filePath
       if (!fileUrl && filePath) {
@@ -304,17 +306,38 @@ export default function AssignmentSubmissions() {
                   </View>
                 </View>
 
-                {submission.file_name && (
-                  <TouchableOpacity style={styles.fileRow} onPress={() => openSubmissionFile(submission)}>
+                {(Array.isArray(submission.files) && submission.files.length > 0
+                  ? submission.files
+                  : (submission.file_name || submission.file_path || submission.file_url)
+                    ? [{
+                        path: submission.file_path,
+                        url: submission.file_url,
+                        name: submission.file_name,
+                        size: submission.file_size,
+                        type: submission.file_type,
+                      }]
+                    : []
+                ).map((file: any, fileIndex: number) => (
+                  <TouchableOpacity
+                    key={`${file.path || file.name || fileIndex}`}
+                    style={styles.fileRow}
+                    onPress={() => openSubmissionFile(file)}
+                  >
                     <View style={styles.fileIcon}>
-                      <Ionicons name="document-text" size={20} color={Colors.error} />
+                      <Ionicons
+                        name={String(file.type || '').startsWith('image/') ? 'image' : 'document-text'}
+                        size={20}
+                        color={Colors.error}
+                      />
                     </View>
                     <View style={styles.fileInfo}>
-                      <Text style={styles.fileName} numberOfLines={1}>{submission.file_name}</Text>
+                      <Text style={styles.fileName} numberOfLines={1}>
+                        {file.name || `Attachment ${fileIndex + 1}`}
+                      </Text>
                     </View>
                     <Ionicons name="open-outline" size={20} color={Colors.primary} />
                   </TouchableOpacity>
-                )}
+                ))}
 
                 {submission.feedback && (
                   <View style={styles.feedbackPreview}>

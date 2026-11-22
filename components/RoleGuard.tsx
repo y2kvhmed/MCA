@@ -31,7 +31,24 @@ export default function RoleGuard({ allowedRoles, children, redirectTo = '/' }: 
       }
 
       setUser(currentUser);
-      // Permissive access during testing: allow visiting any page
+
+      // Enforce the allowed roles
+      if (!allowedRoles.includes(currentUser.role)) {
+        console.warn(`Access denied for role "${currentUser.role}". Allowed roles: ${allowedRoles.join(', ')}`);
+        setHasAccess(false);
+        // Send the user back to their own dashboard
+        if (currentUser.role === 'admin') {
+          router.replace('/(tabs)/admin-dashboard');
+        } else if (currentUser.role === 'teacher') {
+          router.replace('/(tabs)/teacher-dashboard');
+        } else if (currentUser.role === 'student') {
+          router.replace('/(tabs)/student-dashboard');
+        } else {
+          router.replace('/welcome');
+        }
+        return;
+      }
+
       setHasAccess(true);
     } catch (error) {
       console.error('Access check error:', error);

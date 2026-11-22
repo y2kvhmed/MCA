@@ -16,11 +16,16 @@ interface VercelApiResponse extends ServerResponse {
   send: (body: any) => void;
 }
 
-// Supabase configuration for server-side auth token validation
+// Supabase configuration for server-side lookups
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://nykfwiljylzxkmlccpve.supabase.co';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55a2Z3aWxqeWx6eGttbGNjcHZlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NzczMzIsImV4cCI6MjEwNzE1MzMzMn0.0KlcJi4UIMgDDH59zf4R6WjFxOKtgRcMu75CDDodQZM';
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+// This relay runs with no user session, so it cannot read RLS-protected tables
+// (app_users / lessons) with the anon key. Use the service-role key when it is
+// configured; fall back to anon so nothing breaks before the env var is set.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY, {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
