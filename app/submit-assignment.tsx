@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { File as LocalFile } from 'expo-file-system';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { pickAssignmentFile, uploadFileToSupabase, FILE_CONFIG } from '../lib/fileUpload';
+import { pickAssignmentFiles, captureAssignmentPhoto, uploadFileToSupabase, isImageFile, compressImageFile, FILE_CONFIG } from '../lib/fileUpload';
 import { formatFileSize, formatDueDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MediaViewer from '../components/MediaViewer';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
@@ -19,18 +20,13 @@ export default function SubmitAssignment() {
   const { assignmentId } = useLocalSearchParams();
   const [assignment, setAssignment] = useState<any>(null);
   const [user, setUser] = useState<any>(null);
-  const [selectedFile, setSelectedFile] = useState<any>(null);
+  const [selectedFiles, setSelectedFiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [existingSubmission, setExistingSubmission] = useState<any>(null);
-  const [errorLog, setErrorLog] = useState<string | null>(null);
-
-  // Small debug helper: capture the real error message so it is visible on screen.
-  const logError = (label: string, error?: any) => {
-    const detail = error?.message || error?.error_description || (typeof error === 'string' ? error : '') || (error ? String(error) : '');
-    setErrorLog(detail ? `${label}: ${detail}` : label);
-    console.error(`[submit-assignment] ${label}`, error);
-  };
+  const [preparing, setPreparing] = useState(false);
+  const [viewerFiles, setViewerFiles] = useState<any[] | null>(null);
+  const [viewerIndex, setViewerIndex] = useState(0);
 
   useEffect(() => {
     loadData();
@@ -79,124 +75,129 @@ export default function SubmitAssignment() {
         setExistingSubmission(submissionData);
       }
     } catch (error) {
-      console.error('Load data error:', error);
-      logError('Failed to load assignment', error);
       handleError(error, 'Failed to load assignment');
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePickFile = async () => {
+  // Shrink photos (web only) and attach a preview URI before adding them to the list.
+  const prepareAndAdd = async (files: any[]) => {
+    setPreparing(true);
     try {
-      const result = await pickAssignmentFile();
-      if (result.success && result.file) {
-        setSelectedFile(result.file);
-      } else if (result.error) {
-        logError('Could not select file', result.error);
+      const enriched = await Promise.all(
+        files.map(async (file: any) => {
+          const prepared = await compressImageFile(file);
+          let previewUri = prepared.uri;
+          if (!previewUri && typeof window !== 'undefined' && prepared instanceof Blob) {
+            try { previewUri = URL.createObjectURL(prepared); } catch {}
+          }
+          return { ...prepared, previewUri };
+        })
+      );
+      setSelectedFiles((prev) => [...prev, ...enriched]);
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const handlePickFiles = async () => {
+    try {
+      const result = await pickAssignmentFiles();
+      if (result.success && result.files) {
+        await prepareAndAdd(result.files);
+      } else if (result.error && !/cancel/i.test(result.error) && !/No file was selected/i.test(result.error)) {
         handleError(null, result.error);
       }
     } catch (error: any) {
-      logError('Failed to pick file', error);
       handleError(error, 'Failed to pick file');
     }
   };
 
-  const handleRemoveFile = () => {
-    setSelectedFile(null);
+  const handleTakePhoto = async () => {
+    try {
+      const result = await captureAssignmentPhoto();
+      if (result.success && result.file) {
+        await prepareAndAdd([result.file]);
+      } else if (result.error && !/cancel/i.test(result.error)) {
+        handleError(null, result.error);
+      }
+    } catch (error: any) {
+      handleError(error, 'Failed to capture photo');
+    }
   };
 
-  const openExistingSubmission = async () => {
-    if (!existingSubmission) return;
-    try {
-      if (!existingSubmission.file_path && !existingSubmission.file_url) {
-        handleError(null, 'No file available');
-        return;
-      }
-      
-      let fileUrl = '';
-      
-      // Try signed URL first
-      if (existingSubmission.file_path) {
-        const { data, error } = await supabase.storage
-          .from('submissions')
-          .createSignedUrl(existingSubmission.file_path, 3600);
-        if (!error && data?.signedUrl) {
-          fileUrl = data.signedUrl;
-        }
-      }
-      
-      // Fallback to public URL
-      if (!fileUrl && existingSubmission.file_path) {
-        const { data } = supabase.storage
-          .from('submissions')
-          .getPublicUrl(existingSubmission.file_path);
-        if (data?.publicUrl) {
-          fileUrl = data.publicUrl;
-        }
-      }
-      
-      // Fallback to stored URL
-      if (!fileUrl && existingSubmission.file_url) {
-        fileUrl = existingSubmission.file_url;
-      }
-      
-      if (!fileUrl) {
-        handleError(null, 'Could not get file URL');
-        return;
-      }
-      
-      if (typeof window !== 'undefined') {
-        window.open(fileUrl, '_blank');
-      } else {
-        await Linking.openURL(fileUrl);
-      }
-    } catch (error) {
-      handleError(error, 'Failed to open file');
-    }
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Open a set of files in the in-app viewer (images swipe, PDFs render inline).
+  const openInViewer = (list: any[], index: number) => {
+    if (!list.length) return;
+    setViewerFiles(
+      list.map((f) => ({ path: f.path, url: f.url || f.previewUri, name: f.name, type: f.type || f.mimeType }))
+    );
+    setViewerIndex(index);
   };
 
   const handleSubmit = async () => {
-    if (!selectedFile || !user || !assignment) {
-      logError('Cannot submit — missing data', { hasFile: !!selectedFile, hasUser: !!user, hasAssignment: !!assignment });
+    if (selectedFiles.length === 0 || !user || !assignment) {
       return;
     }
     setSubmitting(true);
-    setErrorLog(null);
     try {
-      const originalName = selectedFile.name || (selectedFile.file && selectedFile.file.name) || 'submission.pdf';
-      const fileExt = originalName.split('.').pop() || 'pdf';
-      const mimeType = selectedFile.type || selectedFile.mimeType || (selectedFile.file && selectedFile.file.type) || 'application/pdf';
-      const fileSize = selectedFile.size || 0;
-
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `assignment_${assignment.id}/student_${user.id}/${fileName}`;
-
-      const uploadResult = await uploadFileToSupabase(
-        selectedFile,
-        FILE_CONFIG.buckets.assignments,
-        filePath
-      );
-
-      if (!uploadResult.success) throw new Error(`Storage upload rejected: ${uploadResult.error}`);
-
-      const publicUrl = uploadResult.data!.publicUrl;
-
       const isLate = assignment.due_date ? new Date() > new Date(assignment.due_date) : false;
-      let submissionError = null;
 
+      // Upload every attached file to storage.
+      const uploaded: any[] = [];
+      for (const file of selectedFiles) {
+        const originalName = file.name || (file.file && file.file.name) || 'submission';
+        const fileExt = originalName.split('.').pop() || 'bin';
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        // Sorted by school / assignment / student so the bucket stays browsable.
+        const schoolKey = assignment.school_id || 'unassigned';
+        const filePath = `schools/${schoolKey}/assignments/${assignment.id}/students/${user.id}/${fileName}`;
+
+        const uploadResult = await uploadFileToSupabase(
+          file,
+          FILE_CONFIG.buckets.assignments,
+          filePath
+        );
+
+        if (!uploadResult.success) {
+          throw new Error(`Storage upload rejected for "${originalName}": ${uploadResult.error}`);
+        }
+
+        uploaded.push({
+          path: filePath,
+          url: uploadResult.data!.publicUrl,
+          name: originalName,
+          size: file.size || 0,
+          type: file.type || file.mimeType || (file.file && file.file.type) || '',
+        });
+      }
+
+      // Keep legacy single-file columns in sync with the first file.
+      const primary = uploaded[0];
+      const baseRecord = {
+        content: 'File submission',
+        files: uploaded,
+        file_path: primary.path,
+        file_name: primary.name,
+        file_size: primary.size,
+        file_url: primary.url,
+        file_type: primary.type,
+        submitted_at: new Date().toISOString(),
+        status: 'submitted',
+        is_late: isLate,
+      };
+
+      let submissionError = null;
       if (existingSubmission) {
         const { error } = await supabase
           .from('submissions')
           .update({
-            content: 'File submission',
-            file_path: filePath,
-            file_name: originalName,
-            file_size: fileSize,
-            file_url: publicUrl,
-            submitted_at: new Date().toISOString(),
-            status: 'submitted',
-            is_late: isLate,
+            ...baseRecord,
             attempt_number: (existingSubmission.attempt_number || 1) + 1,
             updated_at: new Date().toISOString(),
           })
@@ -206,31 +207,25 @@ export default function SubmitAssignment() {
         const { error } = await supabase
           .from('submissions')
           .insert({
+            ...baseRecord,
             assignment_id: assignment.id,
             student_id: user.id,
-            content: 'File submission',
-            file_path: filePath,
-            file_name: originalName,
-            file_size: fileSize,
-            file_url: publicUrl,
-            submitted_at: new Date().toISOString(),
-            status: 'submitted',
-            is_late: isLate,
             attempt_number: 1,
           });
         submissionError = error;
       }
 
       if (submissionError) {
-        await supabase.storage.from(FILE_CONFIG.buckets.assignments).remove([filePath]);
+        // Roll back the uploaded files if the record could not be saved.
+        await supabase.storage
+          .from(FILE_CONFIG.buckets.assignments)
+          .remove(uploaded.map((u) => u.path));
         throw new Error(`Could not save submission record: ${submissionError.message}`);
       }
 
       showSuccess(existingSubmission ? 'Assignment resubmitted successfully!' : 'Assignment submitted successfully!');
       handleBack();
     } catch (error: any) {
-      console.error('Submit error:', error);
-      logError('Submit failed', error);
       handleError(error, 'Failed to submit assignment');
     } finally {
       setSubmitting(false);
@@ -261,12 +256,6 @@ export default function SubmitAssignment() {
         </View>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
           <Text style={{ color: Colors.text.primary, fontSize: 16 }}>Assignment not found</Text>
-          {errorLog && (
-            <View style={[styles.debugBanner, { marginTop: 16 }]}>
-              <Ionicons name="bug" size={18} color={Colors.error} />
-              <Text style={styles.debugText} selectable>{errorLog}</Text>
-            </View>
-          )}
           <Button title="Back to Dashboard" onPress={handleBack} style={{ marginTop: 16 }} />
         </View>
       </SafeAreaView>
@@ -283,6 +272,15 @@ export default function SubmitAssignment() {
   const daysUntilDue = dueDate 
     ? Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
     : null;
+
+  // Already-submitted files (new multi-file array, or the legacy single file).
+  const existingFiles = existingSubmission
+    ? (Array.isArray(existingSubmission.files) && existingSubmission.files.length > 0
+        ? existingSubmission.files
+        : (existingSubmission.file_path || existingSubmission.file_url)
+          ? [{ path: existingSubmission.file_path, url: existingSubmission.file_url, name: existingSubmission.file_name, size: existingSubmission.file_size, type: existingSubmission.file_type }]
+          : [])
+    : [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -326,16 +324,6 @@ export default function SubmitAssignment() {
           </View>
         )}
 
-        {errorLog && (
-          <View style={styles.debugBanner}>
-            <Ionicons name="bug" size={18} color={Colors.error} />
-            <Text style={styles.debugText} selectable>{errorLog}</Text>
-            <TouchableOpacity onPress={() => setErrorLog(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close" size={18} color={Colors.error} />
-            </TouchableOpacity>
-          </View>
-        )}
-
         {assignment.instructions && (
           <Card style={styles.instructionsCard}>
             <Text style={styles.sectionTitle}>Instructions</Text>
@@ -353,18 +341,28 @@ export default function SubmitAssignment() {
                 </Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.existingFile} onPress={openExistingSubmission}>
-              <View style={styles.fileIconBox}>
-                <Ionicons name="document" size={24} color={Colors.error} />
-              </View>
-              <View style={styles.fileDetails}>
-                <Text style={styles.existingFileName}>{existingSubmission.file_name}</Text>
-                <Text style={styles.existingFileDate}>
-                  Submitted {new Date(existingSubmission.submitted_at).toLocaleDateString()}
-                </Text>
-              </View>
-              <Ionicons name="open-outline" size={20} color={Colors.primary} />
-            </TouchableOpacity>
+            {existingFiles.map((file: any, index: number) => (
+              <TouchableOpacity
+                key={`${file.path || file.name}-${index}`}
+                style={styles.existingFile}
+                onPress={() => openInViewer(existingFiles, index)}
+              >
+                {isImageFile(file) && file.url ? (
+                  <Image source={{ uri: file.url }} style={styles.existingThumb} />
+                ) : (
+                  <View style={styles.fileIconBox}>
+                    <Ionicons name="document" size={24} color={Colors.error} />
+                  </View>
+                )}
+                <View style={styles.fileDetails}>
+                  <Text style={styles.existingFileName} numberOfLines={1}>{file.name || `File ${index + 1}`}</Text>
+                  <Text style={styles.existingFileDate}>
+                    Submitted {new Date(existingSubmission.submitted_at).toLocaleDateString()}
+                  </Text>
+                </View>
+                <Ionicons name="open-outline" size={20} color={Colors.primary} />
+              </TouchableOpacity>
+            ))}
             {existingSubmission.feedback && (
               <View style={styles.feedbackBox}>
                 <Text style={styles.feedbackLabel}>Teacher Feedback</Text>
@@ -376,29 +374,43 @@ export default function SubmitAssignment() {
 
         <Card style={styles.uploadCard}>
           <Text style={styles.sectionTitle}>{existingSubmission ? 'Resubmit your work' : 'Add your work'}</Text>
-          <Text style={styles.uploadHint}>Only PDF files are accepted (Max 30MB)</Text>
-          {!selectedFile ? (
-            <TouchableOpacity style={styles.uploadArea} onPress={handlePickFile}>
-              <View style={styles.uploadIconCircle}>
-                <Ionicons name="add" size={32} color={Colors.primary} />
-              </View>
-              <Text style={styles.uploadText}>Add attachment</Text>
-              <Text style={styles.uploadSubtext}>Tap to select a PDF file</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.selectedFileCard}>
-              <View style={styles.selectedFileIcon}>
-                <Ionicons name="document" size={28} color={Colors.error} />
-              </View>
+          <Text style={styles.uploadHint}>PDF or photos accepted (Max 50MB each)</Text>
+
+          {selectedFiles.map((file, index) => (
+            <View key={`${file.name}-${index}`} style={styles.selectedFileCard}>
+              <TouchableOpacity onPress={() => openInViewer(selectedFiles, index)}>
+                {isImageFile(file) && file.previewUri ? (
+                  <Image source={{ uri: file.previewUri }} style={styles.selectedThumb} />
+                ) : (
+                  <View style={styles.selectedFileIcon}>
+                    <Ionicons name="document" size={28} color={Colors.error} />
+                  </View>
+                )}
+              </TouchableOpacity>
               <View style={styles.selectedFileInfo}>
-                <Text style={styles.selectedFileName} numberOfLines={1}>{selectedFile.name}</Text>
-                <Text style={styles.selectedFileSize}>{formatFileSize(selectedFile.size)}</Text>
+                <Text style={styles.selectedFileName} numberOfLines={1}>{file.name}</Text>
+                <Text style={styles.selectedFileSize}>{formatFileSize(file.size)}</Text>
               </View>
-              <TouchableOpacity onPress={handleRemoveFile} style={styles.removeButton}>
+              <TouchableOpacity onPress={() => handleRemoveFile(index)} style={styles.removeButton}>
                 <Ionicons name="close-circle" size={24} color={Colors.error} />
               </TouchableOpacity>
             </View>
-          )}
+          ))}
+
+          <TouchableOpacity style={styles.uploadArea} onPress={handlePickFiles} disabled={preparing}>
+            <View style={styles.uploadIconCircle}>
+              <Ionicons name={preparing ? 'hourglass-outline' : 'add'} size={32} color={Colors.primary} />
+            </View>
+            <Text style={styles.uploadText}>
+              {preparing ? 'Preparing…' : selectedFiles.length > 0 ? 'Add more' : 'Add attachment'}
+            </Text>
+            <Text style={styles.uploadSubtext}>Tap to select PDF or photos</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.cameraButton} onPress={handleTakePhoto} disabled={preparing}>
+            <Ionicons name="camera-outline" size={20} color={Colors.primary} />
+            <Text style={styles.cameraButtonText}>Take Photo</Text>
+          </TouchableOpacity>
         </Card>
 
         {isOverdue && !existingSubmission && (
@@ -420,12 +432,19 @@ export default function SubmitAssignment() {
             title={existingSubmission ? 'Resubmit' : 'Turn in'}
             onPress={handleSubmit}
             loading={submitting}
-            disabled={!selectedFile || submitting}
+            disabled={selectedFiles.length === 0 || submitting}
             style={styles.submitButton}
           />
         )}
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      <MediaViewer
+        visible={viewerFiles !== null}
+        files={viewerFiles || []}
+        initialIndex={viewerIndex}
+        onClose={() => setViewerFiles(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -468,8 +487,9 @@ const styles = StyleSheet.create({
 
   existingFile: {
     flexDirection: 'row', alignItems: 'center', padding: Spacing.md,
-    backgroundColor: Colors.background, borderRadius: 8,
+    backgroundColor: Colors.background, borderRadius: 8, marginBottom: Spacing.sm,
   },
+  existingThumb: { width: 40, height: 40, borderRadius: 8, marginRight: Spacing.md, backgroundColor: Colors.border.light },
   fileIconBox: {
     width: 40, height: 40, borderRadius: 8, backgroundColor: Colors.error + '15',
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
@@ -485,7 +505,14 @@ const styles = StyleSheet.create({
   uploadArea: {
     alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xxxl,
     borderWidth: 2, borderColor: Colors.border.medium, borderStyle: 'dashed', borderRadius: 12, backgroundColor: Colors.background,
+    marginTop: Spacing.sm,
   },
+  cameraButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    marginTop: Spacing.sm, paddingVertical: Spacing.md, borderRadius: 12,
+    borderWidth: 1, borderColor: Colors.primary, backgroundColor: Colors.primary + '10',
+  },
+  cameraButtonText: { fontSize: 15, fontWeight: '600', color: Colors.primary, marginLeft: Spacing.sm },
   uploadIconCircle: {
     width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.primary + '15',
     justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.md,
@@ -495,7 +522,9 @@ const styles = StyleSheet.create({
   selectedFileCard: {
     flexDirection: 'row', alignItems: 'center', padding: Spacing.md,
     backgroundColor: Colors.background, borderRadius: 12, borderWidth: 1, borderColor: Colors.success,
+    marginBottom: Spacing.sm,
   },
+  selectedThumb: { width: 48, height: 48, borderRadius: 8, marginRight: Spacing.md, backgroundColor: Colors.border.light },
   selectedFileIcon: {
     width: 48, height: 48, borderRadius: 8, backgroundColor: Colors.error + '15',
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
@@ -514,11 +543,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error + '15', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: Colors.error,
   },
   errorText: { flex: 1, fontSize: 14, color: Colors.error, marginLeft: Spacing.sm, fontWeight: '500' },
-  debugBanner: {
-    flexDirection: 'row', alignItems: 'center', margin: Spacing.md, padding: Spacing.md,
-    backgroundColor: Colors.error + '15', borderRadius: 8, borderWidth: 1, borderColor: Colors.error,
-  },
-  debugText: { flex: 1, fontSize: 12, color: Colors.error, marginHorizontal: Spacing.sm, fontFamily: 'monospace' as any },
   submitButton: { marginHorizontal: Spacing.md, marginTop: Spacing.md },
   bottomSpacer: { height: Spacing.xxxl },
 });

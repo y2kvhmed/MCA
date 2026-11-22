@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { isImageFile } from '../lib/fileUpload';
 import { formatRelativeDate, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import MediaViewer from '../components/MediaViewer';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
@@ -21,6 +23,7 @@ export default function SubmissionDetails() {
   const [grading, setGrading] = useState(false);
   const [grade, setGrade] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (params.submissionId) {
@@ -123,73 +126,8 @@ export default function SubmissionDetails() {
     }
   };
 
-  const handleOpenFile = async () => {
-    try {
-      let filePath = submission?.file_path || '';
-      if (filePath.startsWith('http')) {
-        const parts = filePath.split('/submissions/');
-        if (parts.length > 1) {
-          filePath = decodeURIComponent(parts[1]);
-        }
-      }
-      if (filePath.startsWith('submissions/')) {
-        filePath = filePath.replace(/^submissions\//, '');
-      }
-
-      // 1. Direct stored URL
-      let fileUrl = submission?.file_url || '';
-
-      // 2. Or public storage URL from filePath
-      if (!fileUrl && filePath) {
-        const { data } = supabase.storage.from('submissions').getPublicUrl(filePath);
-        if (data?.publicUrl) fileUrl = data.publicUrl;
-      }
-
-      // 3. Or signed URL from filePath
-      if (!fileUrl && filePath) {
-        try {
-          const { data, error } = await supabase.storage
-            .from('submissions')
-            .createSignedUrl(filePath, 3600);
-          if (!error && data?.signedUrl) {
-            fileUrl = data.signedUrl;
-          }
-        } catch (e) {
-          console.warn('Signed URL error:', e);
-        }
-      }
-
-      // If we have a direct URL, open it directly so browser's native PDF reader renders it
-      if (fileUrl) {
-        if (typeof window !== 'undefined') {
-          window.open(fileUrl, '_blank');
-        } else {
-          await Linking.openURL(fileUrl);
-        }
-        return;
-      }
-
-      // Fallback on Web: download blob explicitly formatted as application/pdf
-      if (typeof window !== 'undefined' && filePath) {
-        try {
-          const { data: blobData, error: blobErr } = await supabase.storage
-            .from('submissions')
-            .download(filePath);
-          if (!blobErr && blobData) {
-            const pdfBlob = new Blob([blobData], { type: 'application/pdf' });
-            const blobUrl = window.URL.createObjectURL(pdfBlob);
-            window.open(blobUrl, '_blank');
-            return;
-          }
-        } catch (e) {
-          console.warn('Blob download error:', e);
-        }
-      }
-
-      handleError(null, 'No file available for this submission');
-    } catch (error) {
-      handleError(error, 'Failed to open file');
-    }
+  const handleOpenFile = (index: number) => {
+    setViewerIndex(index);
   };
 
   if (loading) {
@@ -207,6 +145,13 @@ export default function SubmissionDetails() {
       </SafeAreaView>
     );
   }
+
+  // Attached files (new multi-file array, or the legacy single file).
+  const files = Array.isArray(submission.files) && submission.files.length > 0
+    ? submission.files
+    : (submission.file_path || submission.file_url)
+      ? [{ path: submission.file_path, url: submission.file_url, name: submission.file_name, size: submission.file_size, type: submission.file_type }]
+      : [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -264,10 +209,12 @@ export default function SubmissionDetails() {
               </Text>
             </View>
 
-            {submission.file_url && (
+            {files.length > 0 && (
               <View style={styles.metaRow}>
                 <Ionicons name="document" size={16} color={Colors.text.secondary} />
-                <Text style={styles.metaText}>File attached: {submission.file_name || 'Document'}</Text>
+                <Text style={styles.metaText}>
+                  {files.length > 1 ? `${files.length} files attached` : `File attached: ${submission.file_name || 'Document'}`}
+                </Text>
               </View>
             )}
           </View>
@@ -279,12 +226,28 @@ export default function SubmissionDetails() {
             </View>
           )}
 
-          {submission.file_url && (
-            <TouchableOpacity style={styles.fileButton} onPress={handleOpenFile}>
-              <Ionicons name="eye" size={16} color={Colors.primary} />
-              <Text style={styles.fileButtonText}>Open Attachment</Text>
+          {files.map((file: any, index: number) => (
+            <TouchableOpacity
+              key={`${file.path || file.name}-${index}`}
+              style={styles.fileButton}
+              onPress={() => handleOpenFile(index)}
+            >
+              {isImageFile(file) && file.url ? (
+                <Image source={{ uri: file.url }} style={styles.fileThumb} />
+              ) : (
+                <Ionicons name="document" size={18} color={Colors.primary} />
+              )}
+              <Text style={styles.fileButtonText} numberOfLines={1}>
+                {file.name || `File ${index + 1}`}
+              </Text>
+              <Ionicons
+                name={isImageFile(file) && file.url ? 'expand' : 'eye'}
+                size={16}
+                color={Colors.primary}
+                style={{ marginLeft: 'auto' }}
+              />
             </TouchableOpacity>
-          )}
+          ))}
         </Card>
 
         {/* Grading Section */}
@@ -330,6 +293,13 @@ export default function SubmissionDetails() {
           />
         </Card>
       </ScrollView>
+
+      <MediaViewer
+        visible={viewerIndex !== null}
+        files={files}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -446,8 +416,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.primary + '30',
+    marginBottom: Spacing.sm,
+  },
+  fileThumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    backgroundColor: Colors.border.light,
   },
   fileButtonText: {
+    flexShrink: 1,
     fontSize: 14,
     color: Colors.primary,
     fontWeight: '500',

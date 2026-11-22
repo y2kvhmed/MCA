@@ -1,10 +1,11 @@
 import { supabase } from './supabase';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { File as LocalFile } from 'expo-file-system';
 
 // File upload configuration
 export const FILE_CONFIG = {
-  maxSizeBytes: 30 * 1024 * 1024, // 30MB for assignments and student work
+  maxSizeBytes: 50 * 1024 * 1024, // 50MB for assignments and student work
   maxMaterialSizeBytes: 100 * 1024 * 1024, // 100MB for study materials
   maxVideoSizeBytes: 1024 * 1024 * 1024, // 1GB for video recordings
   allowedTypes: [
@@ -18,6 +19,15 @@ export const FILE_CONFIG = {
     'text/plain',
   ],
   allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'txt'],
+  // Student submissions: PDF or photos only.
+  submissionTypes: [
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+  ],
+  submissionExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif'],
   buckets: {
     assignments: 'submissions',
     profiles: 'user-profiles',
@@ -27,7 +37,11 @@ export const FILE_CONFIG = {
 };
 
 // File validation
-export function validateFile(file: any): { isValid: boolean; error?: string } {
+export function validateFile(
+  file: any,
+  allowedTypes: string[] = FILE_CONFIG.allowedTypes,
+  allowedExtensions: string[] = FILE_CONFIG.allowedExtensions
+): { isValid: boolean; error?: string } {
   if (!file) {
     return { isValid: false, error: 'No file selected' };
   }
@@ -42,17 +56,62 @@ export function validateFile(file: any): { isValid: boolean; error?: string } {
   const name = file.name || file.fileName || '';
   const ext = name.split('.').pop()?.toLowerCase();
   const rawType = file.mimeType || file.type || 'unknown';
-  const isMimeAllowed = FILE_CONFIG.allowedTypes.includes(rawType);
-  const isExtAllowed = ext && FILE_CONFIG.allowedExtensions.includes(ext);
+  const isMimeAllowed = allowedTypes.includes(rawType);
+  const isExtAllowed = ext && allowedExtensions.includes(ext);
 
   if (!isMimeAllowed && !isExtAllowed) {
     return { 
       isValid: false, 
-      error: `File type not allowed (name: "${name}", type: "${rawType}"). Allowed: ${FILE_CONFIG.allowedExtensions.join(', ')}.` 
+      error: `File type not allowed (name: "${name}", type: "${rawType}"). Allowed: ${allowedExtensions.join(', ')}.` 
     };
   }
 
   return { isValid: true };
+}
+
+// True when the file is an image (by mime type or extension).
+export function isImageFile(file: any): boolean {
+  const type = file?.type || file?.mimeType || '';
+  const name = file?.name || '';
+  return type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic)$/i.test(name);
+}
+
+// Downscale + re-encode a picked photo before upload to keep uploads small.
+// Web only (canvas based); a no-op elsewhere or on any failure.
+export async function compressImageFile(file: any, maxDimension = 1600, quality = 0.7): Promise<any> {
+  try {
+    if (typeof window === 'undefined' || !isImageFile(file)) return file;
+    if (typeof createImageBitmap !== 'function') return file;
+
+    const bitmap = await createImageBitmap(file);
+    const largest = Math.max(bitmap.width, bitmap.height);
+    if (largest <= maxDimension) {
+      bitmap.close?.();
+      return file;
+    }
+
+    const scale = maxDimension / largest;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close?.();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', quality)
+    );
+    if (!blob) return file;
+
+    const name = (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
+    return new File([blob], name, { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
 }
 
 // Generate unique file path
@@ -265,38 +324,43 @@ export async function submitAssignment(
   }
 }
 
-// Pick and validate file (cross-platform)
-export async function pickAssignmentFile(): Promise<{ success: boolean; file?: any; error?: string }> {
+// Pick and validate files for a submission (multi-select, PDF or photos)
+export async function pickAssignmentFiles(): Promise<{ success: boolean; files?: any[]; error?: string }> {
+  const types = FILE_CONFIG.submissionTypes;
+  const extensions = FILE_CONFIG.submissionExtensions;
   try {
     if (typeof window !== 'undefined') {
       // Web: Use HTML file input
       return new Promise((resolve) => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = FILE_CONFIG.allowedTypes.join(',');
+        input.multiple = true;
+        input.accept = types.join(',');
         // Some mobile browsers (Android Chrome / iOS Safari) ignore `click()` on an input
         // that is not attached to the document, so keep it in the DOM but off-screen.
         input.style.position = 'fixed';
         input.style.left = '-9999px';
         input.style.opacity = '0';
 
-        const finish = (result: { success: boolean; file?: any; error?: string }) => {
+        const finish = (result: { success: boolean; files?: any[]; error?: string }) => {
           if (input.parentNode) input.parentNode.removeChild(input);
           resolve(result);
         };
 
         input.onchange = (event: any) => {
-          const file = event.target.files && event.target.files[0];
-          if (!file) {
+          const picked: any[] = Array.from(event.target.files || []);
+          if (picked.length === 0) {
             finish({ success: false, error: 'No file was selected' });
             return;
           }
-          const validation = validateFile(file);
-          if (validation.isValid) {
-            finish({ success: true, file });
-          } else {
-            finish({ success: false, error: validation.error });
+          for (const file of picked) {
+            const validation = validateFile(file, types, extensions);
+            if (!validation.isValid) {
+              finish({ success: false, error: validation.error });
+              return;
+            }
           }
+          finish({ success: true, files: picked });
         };
 
         // Safari 16.4+ / Chrome 113+ fire `cancel` when the picker is dismissed.
@@ -311,30 +375,108 @@ export async function pickAssignmentFile(): Promise<{ success: boolean; file?: a
     } else {
       // Mobile: Use DocumentPicker
       const result = await DocumentPicker.getDocumentAsync({
-        type: FILE_CONFIG.allowedTypes,
+        type: types,
         copyToCacheDirectory: true,
-        multiple: false,
+        multiple: true,
       });
 
       if (result.canceled) {
         return { success: false, error: 'File selection cancelled' };
       }
 
-      const file = result.assets && result.assets[0];
-      if (!file) {
+      const files = (result.assets || []).filter(Boolean);
+      if (files.length === 0) {
         return { success: false, error: 'Picker returned no file asset' };
       }
-      const validation = validateFile(file);
-      
-      if (!validation.isValid) {
-        return { success: false, error: validation.error };
+      for (const file of files) {
+        const validation = validateFile(file, types, extensions);
+        if (!validation.isValid) {
+          return { success: false, error: validation.error };
+        }
       }
 
-      return { success: true, file };
+      return { success: true, files };
     }
   } catch (error: any) {
     console.error('File picker error:', error);
     return { success: false, error: `Failed to pick file: ${error?.message || String(error)}` };
+  }
+}
+
+// Capture a single photo with the camera (web uses the `capture` input attribute).
+export async function captureAssignmentPhoto(): Promise<{ success: boolean; file?: any; error?: string }> {
+  try {
+    if (typeof window !== 'undefined') {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.setAttribute('capture', 'environment');
+        input.style.position = 'fixed';
+        input.style.left = '-9999px';
+        input.style.opacity = '0';
+
+        const finish = (result: { success: boolean; file?: any; error?: string }) => {
+          if (input.parentNode) input.parentNode.removeChild(input);
+          resolve(result);
+        };
+
+        input.onchange = (event: any) => {
+          const file = event.target.files && event.target.files[0];
+          if (!file) {
+            finish({ success: false, error: 'No photo captured' });
+            return;
+          }
+          const validation = validateFile(file, FILE_CONFIG.submissionTypes, FILE_CONFIG.submissionExtensions);
+          if (!validation.isValid) {
+            finish({ success: false, error: validation.error });
+            return;
+          }
+          finish({ success: true, file });
+        };
+
+        input.addEventListener('cancel', () => finish({ success: false, error: 'Photo capture cancelled' }));
+
+        document.body.appendChild(input);
+        input.click();
+      });
+    }
+
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      return { success: false, error: 'Camera permission denied' };
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+    });
+
+    if (result.canceled) {
+      return { success: false, error: 'Photo capture cancelled' };
+    }
+
+    const asset = result.assets?.[0];
+    if (!asset) {
+      return { success: false, error: 'Camera returned no photo' };
+    }
+
+    const file = {
+      uri: asset.uri,
+      name: asset.fileName || `photo-${Date.now()}.jpg`,
+      type: asset.mimeType || 'image/jpeg',
+      size: asset.fileSize || 0,
+    };
+
+    const validation = validateFile(file, FILE_CONFIG.submissionTypes, FILE_CONFIG.submissionExtensions);
+    if (!validation.isValid) {
+      return { success: false, error: validation.error };
+    }
+
+    return { success: true, file };
+  } catch (error: any) {
+    console.error('Camera error:', error);
+    return { success: false, error: `Failed to capture photo: ${error?.message || String(error)}` };
   }
 }
 

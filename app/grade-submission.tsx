@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Platform, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
+import { isImageFile } from '../lib/fileUpload';
 import { formatRelativeDate, formatFileSize, handleError, showSuccess } from '../lib/utils';
 import Card from '../components/Card';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MediaViewer from '../components/MediaViewer';
 import { Colors } from '../constants/Colors';
 import { Spacing } from '../constants/Styles';
 
@@ -23,6 +25,7 @@ export default function GradeSubmission() {
   const [saving, setSaving] = useState(false);
 
   const [grade, setGrade] = useState('');
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -97,54 +100,8 @@ export default function GradeSubmission() {
     }
   };
 
-  const handleOpenFile = async () => {
-    try {
-      if (!submission?.file_path && !submission?.file_url) {
-        Alert.alert('Error', 'No file available for this submission');
-        return;
-      }
-      
-      // 1. Direct stored URL
-      let fileUrl = submission.file_url || '';
-
-      // 2. Direct public URL
-      if (!fileUrl && submission.file_path) {
-        const { data } = supabase.storage
-          .from('submissions')
-          .getPublicUrl(submission.file_path);
-        if (data?.publicUrl) fileUrl = data.publicUrl;
-      }
-
-      // 3. Signed URL
-      if (!fileUrl && submission.file_path) {
-        try {
-          const { data, error } = await supabase.storage
-            .from('submissions')
-            .createSignedUrl(submission.file_path, 3600);
-          if (!error && data?.signedUrl) fileUrl = data.signedUrl;
-        } catch (_) {}
-      }
-      
-      if (!fileUrl) {
-        Alert.alert('Error', 'Could not get file URL. The file may have been deleted or access was denied.');
-        return;
-      }
-      
-      // Open the file
-      if (Platform.OS === 'web') {
-        window.open(fileUrl, '_blank');
-      } else {
-        const canOpen = await Linking.canOpenURL(fileUrl);
-        if (canOpen) {
-          await Linking.openURL(fileUrl);
-        } else {
-          Alert.alert('Error', 'Cannot open this file type on your device');
-        }
-      }
-    } catch (error) {
-      console.error('Open file error:', error);
-      Alert.alert('Error', 'Failed to open file. The file may not exist in storage.');
-    }
+  const handleOpenFile = (index: number) => {
+    setViewerIndex(index);
   };
 
   const handleSaveGrade = async () => {
@@ -187,6 +144,13 @@ export default function GradeSubmission() {
   }
 
   const isLate = submission.is_late;
+
+  // Attached files (new multi-file array, or the legacy single file).
+  const files = Array.isArray(submission.files) && submission.files.length > 0
+    ? submission.files
+    : (submission.file_path || submission.file_url)
+      ? [{ path: submission.file_path, url: submission.file_url, name: submission.file_name, size: submission.file_size, type: submission.file_type }]
+      : [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -246,23 +210,38 @@ export default function GradeSubmission() {
 
         {/* File Info Card */}
         <Card style={styles.fileCard}>
-          <Text style={styles.fileTitle}>Submitted File</Text>
-          <View style={styles.fileInfo}>
-            <Ionicons name="document" size={24} color={Colors.primary} />
-            <View style={styles.fileDetails}>
-              <Text style={styles.fileName}>{submission.file_name || 'Submission PDF'}</Text>
-              {submission.file_size ? (
-                <Text style={styles.fileSize}>{formatFileSize(submission.file_size)}</Text>
-              ) : null}
-            </View>
-            <TouchableOpacity 
-              style={styles.downloadButton} 
-              onPress={handleOpenFile}
-            >
-              <Ionicons name="open" size={20} color={Colors.primary} />
-              <Text style={styles.downloadText}>Open File</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.fileTitle}>
+            Submitted {files.length > 1 ? `Files (${files.length})` : 'File'}
+          </Text>
+          {files.length === 0 ? (
+            <Text style={styles.fileName}>No file attached</Text>
+          ) : (
+            files.map((file: any, index: number) => (
+              <View key={`${file.path || file.name}-${index}`} style={styles.fileRow}>
+                {isImageFile(file) && file.url ? (
+                  <Image source={{ uri: file.url }} style={styles.fileThumb} />
+                ) : (
+                  <Ionicons name="document" size={24} color={Colors.primary} />
+                )}
+                <View style={styles.fileDetails}>
+                  <Text style={styles.fileName} numberOfLines={1}>
+                    {file.name || `File ${index + 1}`}
+                  </Text>
+                  {file.size ? (
+                    <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity style={styles.downloadButton} onPress={() => handleOpenFile(index)}>
+                  <Ionicons
+                    name={isImageFile(file) && file.url ? 'expand' : 'open'}
+                    size={18}
+                    color={Colors.primary}
+                  />
+                  <Text style={styles.downloadText}>{isImageFile(file) && file.url ? 'View' : 'Open'}</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
         </Card>
 
         {/* Comments & Grading Card */}
@@ -295,6 +274,13 @@ export default function GradeSubmission() {
           style={styles.submitButton}
         />
       </ScrollView>
+
+      <MediaViewer
+        visible={viewerIndex !== null}
+        files={files}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -396,9 +382,16 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     marginBottom: Spacing.md,
   },
-  fileInfo: {
+  fileRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  fileThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: Colors.border.light,
   },
   fileDetails: {
     flex: 1,
