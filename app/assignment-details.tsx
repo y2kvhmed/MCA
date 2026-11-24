@@ -39,7 +39,8 @@ export default function AssignmentDetails() {
         .select(`
           *,
           class:classes(id, name),
-          teacher:app_users(id, name)
+          teacher:app_users(id, name),
+          school:schools(id, name)
         `)
         .eq('id', assignmentId)
         .single();
@@ -55,6 +56,16 @@ export default function AssignmentDetails() {
         assignmentData = fbData;
       } else {
         assignmentData = data;
+      }
+
+      // The fallback query returns no joined school, so resolve the name here.
+      if (assignmentData && !assignmentData.school && assignmentData.school_id) {
+        const { data: schoolRow } = await supabase
+          .from('schools')
+          .select('id, name')
+          .eq('id', assignmentData.school_id)
+          .maybeSingle();
+        if (schoolRow) assignmentData = { ...assignmentData, school: schoolRow };
       }
       setAssignment(assignmentData);
 
@@ -275,6 +286,13 @@ export default function AssignmentDetails() {
               </View>
             )}
             
+            <View style={styles.metaItem}>
+              <Ionicons name="school" size={16} color={Colors.primary} />
+              <Text style={[styles.metaText, { color: Colors.primary, fontWeight: '600' }]}>
+                {assignment.school?.name || 'All Schools'}
+              </Text>
+            </View>
+
             <View style={styles.metaItem}>
               <Ionicons name="person" size={16} color={Colors.text.secondary} />
               <Text style={styles.metaText}>Teacher: {assignment.teacher?.name || 'Teacher'}</Text>

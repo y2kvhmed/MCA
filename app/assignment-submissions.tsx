@@ -234,7 +234,7 @@ export default function AssignmentSubmissions() {
         </TouchableOpacity>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle} numberOfLines={1}>{assignment.title}</Text>
-          <Text style={styles.headerSubtitle}>{allStudents.length} students total</Text>
+          <Text style={styles.headerSubtitle}>{assignment.school?.name || 'All Schools'} • {allStudents.length} students total</Text>
         </View>
         <TouchableOpacity onPress={exportToCSV} style={styles.exportButton}>
           <Ionicons name="download-outline" size={24} color={Colors.primary} />

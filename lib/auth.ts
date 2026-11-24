@@ -103,7 +103,7 @@ export async function signIn(email: string, password: string) {
   }
 }
 
-export async function getCurrentUser(): Promise<User | null> {
+async function fetchCurrentUser(): Promise<User | null> {
   try {
     logAuth('Getting current user');
 
@@ -156,12 +156,17 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 // Short-lived in-memory cache of the verified session.
-// Navigation used to call getCurrentUser() on every route change, which costs a
-// network round-trip to Supabase Auth plus a profile query. The cache keeps
-// verification authoritative (it is only filled after a real Supabase session,
-// expires quickly, and is cleared on sign-in/sign-out) while making route checks
-// effectively free.
+// Screens, guards and the root layout all call getCurrentUser(), and each call
+// used to cost a network round-trip to Supabase Auth plus a profile query. That
+// made every screen mount show a spinner. The cache keeps verification
+// authoritative: it is only filled after a real Supabase session, expires
+// quickly, and is cleared on sign-in/sign-out. Access control is still enforced
+// by RLS at the database level, not by this cache.
 const VERIFY_CACHE_TTL_MS = 5 * 60 * 1000;
+// A negative result is cached only briefly so a session still being restored at
+// startup cannot keep the user locked out.
+const NULL_CACHE_TTL_MS = 10 * 1000;
+
 let cachedUser: User | null = null;
 let cachedAt = 0;
 
@@ -170,14 +175,25 @@ export function clearCachedUser() {
   cachedAt = 0;
 }
 
-export async function getCurrentUserCached(force = false): Promise<User | null> {
-  if (!force && cachedUser && Date.now() - cachedAt < VERIFY_CACHE_TTL_MS) {
-    return cachedUser;
-  }
-  const user = await getCurrentUser();
+export function setCachedUser(user: User | null) {
   cachedUser = user;
   cachedAt = Date.now();
+}
+
+export async function getCurrentUser(force = false): Promise<User | null> {
+  const ttl = cachedUser ? VERIFY_CACHE_TTL_MS : NULL_CACHE_TTL_MS;
+  if (!force && cachedAt > 0 && Date.now() - cachedAt < ttl) {
+    return cachedUser;
+  }
+
+  const user = await fetchCurrentUser();
+  setCachedUser(user);
   return user;
+}
+
+// Kept for callers that want to bypass the cache explicitly.
+export function getCurrentUserCached(force = false): Promise<User | null> {
+  return getCurrentUser(force);
 }
 
 export async function signOut() {
@@ -225,6 +241,9 @@ export async function updateUserProfile(userId: string, updates: Partial<User>) 
       .single();
 
     if (error) throw error;
+
+    // Keep the cached session in step with the edited profile.
+    setCachedUser(toUser(data));
 
     // Update local session
     await AsyncStorage.setItem('current_user', JSON.stringify(data));

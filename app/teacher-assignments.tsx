@@ -166,6 +166,13 @@ export default function TeacherAssignments() {
                 </View>
 
                 <View style={styles.assignmentMeta}>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="school" size={14} color={Colors.primary} />
+                    <Text style={[styles.metaText, { color: Colors.primary, fontWeight: '600' }]}>
+                      {assignment.school?.name || 'All Schools'}
+                    </Text>
+                  </View>
+
                   {assignment.due_date && (
                     <View style={styles.metaItem}>
                       <Ionicons name="calendar" size={14} color={Colors.text.secondary} />
