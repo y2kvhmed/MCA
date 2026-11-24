@@ -119,27 +119,34 @@ export default function CreateUser() {
       
       if (!result.success) {
         if (result.isDuplicate) {
-          Alert.alert(
-            'User Already Exists',
-            `A user with email ${userData.email} already exists. Would you like to update their information instead?`,
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Update User', 
-                onPress: async () => {
-                  if (result.data?.id) {
-                    const updateResult = await updateExistingUser(result.data.id, userData);
-                    if (updateResult.success) {
-                      showSuccess('User updated successfully');
-                      router.back();
-                    } else {
-                      handleError({ message: updateResult.error }, 'Failed to update user');
-                    }
-                  }
-                }
+          const existingActive = result.data?.is_active;
+          const message = `A user with email ${userData.email} already exists${existingActive === false ? ' (and is deactivated)' : ''}. Would you like to update their information instead?`;
+          const proceed = typeof window !== 'undefined'
+            ? window.confirm(message)
+            : true; // native: Alert.alert handles the choice below
+          const doUpdate = async () => {
+            if (result.data?.id) {
+              const updateResult = await updateExistingUser(result.data.id, userData);
+              if (updateResult.success) {
+                showSuccess('User updated successfully');
+                router.back();
+              } else {
+                handleError({ message: updateResult.error }, 'Failed to update user');
               }
-            ]
-          );
+            }
+          };
+          if (typeof window !== 'undefined') {
+            if (proceed) doUpdate();
+          } else {
+            Alert.alert(
+              'User Already Exists',
+              message,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Update User', onPress: doUpdate }
+              ]
+            );
+          }
         } else {
           handleError({ message: result.error }, 'Failed to create user');
         }

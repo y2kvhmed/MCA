@@ -94,6 +94,7 @@ export async function signIn(email: string, password: string) {
     }
 
     logAuth('Login successful', { id: userData.id, role: userData.role });
+    clearCachedUser();
     await AsyncStorage.setItem('current_user', JSON.stringify(userData));
     return { user: toUser(userData), error: null };
   } catch (error) {
@@ -154,9 +155,35 @@ export async function getCurrentUser(): Promise<User | null> {
   }
 }
 
+// Short-lived in-memory cache of the verified session.
+// Navigation used to call getCurrentUser() on every route change, which costs a
+// network round-trip to Supabase Auth plus a profile query. The cache keeps
+// verification authoritative (it is only filled after a real Supabase session,
+// expires quickly, and is cleared on sign-in/sign-out) while making route checks
+// effectively free.
+const VERIFY_CACHE_TTL_MS = 5 * 60 * 1000;
+let cachedUser: User | null = null;
+let cachedAt = 0;
+
+export function clearCachedUser() {
+  cachedUser = null;
+  cachedAt = 0;
+}
+
+export async function getCurrentUserCached(force = false): Promise<User | null> {
+  if (!force && cachedUser && Date.now() - cachedAt < VERIFY_CACHE_TTL_MS) {
+    return cachedUser;
+  }
+  const user = await getCurrentUser();
+  cachedUser = user;
+  cachedAt = Date.now();
+  return user;
+}
+
 export async function signOut() {
   try {
     logAuth('Signing out');
+    clearCachedUser();
 
     // Clear all local storage
     try {

@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { usePathname, useRootNavigationState, useRouter } from 'expo-router';
 import LoadingSpinner from './LoadingSpinner';
-import { getCurrentUser } from '../lib/auth';
+import { getCurrentUserCached } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { Colors } from '../constants/Colors';
 
@@ -114,73 +114,62 @@ export default function RouteAccessGuard({ children }: { children: React.ReactNo
   const router = useRouter();
   const rootNavigationState = useRootNavigationState();
   const navigationReady = Boolean(rootNavigationState?.key);
-  const [ready, setReady] = useState(false);
-  const checkId = useRef(0);
 
+  // undefined = identity not verified yet for this app session.
+  // null      = verified and signed out.
+  const [role, setRole] = useState<AppRole | null | undefined>(undefined);
+
+  const loadRole = useCallback(async (force: boolean) => {
+    const user = await getCurrentUserCached(force);
+    const value = String(user?.role || '').toLowerCase().trim();
+    setRole(isRole(value) ? value : null);
+  }, []);
+
+  // Subscribe to auth changes once. Navigation must never re-subscribe.
   useEffect(() => {
     if (!navigationReady) return;
 
-    let mounted = true;
-
-    const verifyRoute = async () => {
-      const currentCheck = ++checkId.current;
-      setReady(false);
-
-      if (PUBLIC_ROUTES.has(route)) {
-        setReady(true);
-        return;
-      }
-
-      try {
-        const user = await getCurrentUser();
-        if (!mounted || currentCheck !== checkId.current) return;
-
-        if (!user) {
-          router.replace('/login');
-          return;
-        }
-
-        const role = String(user.role || '').toLowerCase().trim();
-        if (!isRole(role)) {
-          router.replace('/welcome');
-          return;
-        }
-
-        if (!isAllowedOnRoute(route, role)) {
-          router.replace(ROLE_HOME[role]);
-          return;
-        }
-
-        setReady(true);
-      } catch (error) {
-        console.error('Route access check failed:', error);
-        if (mounted && currentCheck === checkId.current) router.replace('/login');
-      }
-    };
-
-    void verifyRoute();
-
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT' && !PUBLIC_ROUTES.has(route)) {
-        setReady(false);
-        router.replace('/login');
+      if (event === 'SIGNED_OUT') {
+        setRole(null);
       } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-        setTimeout(() => {
-          if (mounted) void verifyRoute();
-        }, 0);
+        void loadRole(true);
       }
     });
 
-    return () => {
-      mounted = false;
-      data.subscription.unsubscribe();
-    };
-  }, [navigationReady, pathname, route, router]);
+    return () => data.subscription.unsubscribe();
+  }, [navigationReady, loadRole]);
+
+  // Re-check on navigation, but read the cached session: this is synchronous in
+  // practice, so switching tabs no longer shows a spinner or hits the network.
+  // The cache expires every few minutes, so a real re-verification still happens
+  // periodically without blocking navigation.
+  useEffect(() => {
+    if (!navigationReady) return;
+    void loadRole(false);
+  }, [navigationReady, route, loadRole]);
+
+  const isPublic = PUBLIC_ROUTES.has(route);
+  const allowed =
+    isPublic || (role !== undefined && role !== null && isAllowedOnRoute(route, role));
+
+  // Redirect only once the answer is known; role keeps its previous value during
+  // a re-verification, so an allowed page never flashes the blocker.
+  useEffect(() => {
+    if (!navigationReady || isPublic || role === undefined) return;
+    if (role === null) {
+      router.replace('/login');
+      return;
+    }
+    if (!isAllowedOnRoute(route, role)) {
+      router.replace(ROLE_HOME[role]);
+    }
+  }, [navigationReady, isPublic, route, role, router]);
 
   return (
     <>
       {children}
-      {!ready && (
+      {!allowed && (
         <View style={styles.blocker}>
           <LoadingSpinner />
         </View>

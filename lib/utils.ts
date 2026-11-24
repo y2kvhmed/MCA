@@ -1,7 +1,14 @@
 // Simple notification functions that work on both web and mobile
 export function handleError(error: any, userMessage: string = 'An error occurred') {
+  const detail = formatError(error);
+  const fullMessage = detail && detail !== userMessage ? `${userMessage}: ${detail}` : userMessage;
   console.error('Error:', error);
-  console.warn('User Error:', userMessage);
+  if (typeof window !== 'undefined') {
+    window.alert(fullMessage);
+  } else {
+    const { Alert } = require('react-native');
+    Alert.alert(userMessage, detail || undefined);
+  }
 }
 
 export function showSuccess(message: string) {
