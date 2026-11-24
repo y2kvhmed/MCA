@@ -51,6 +51,15 @@ const formatTimeRange = (start?: string | null, end?: string | null): string => 
   return ` · ${s}${e ? `–${e}` : ''}`;
 };
 
+/** A join timestamp shown in the school's timezone, e.g. "16:05". */
+const formatJoinTime = (value: string): string =>
+  new Date(value).toLocaleTimeString('en-GB', {
+    timeZone: 'Africa/Cairo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+
 export default function Attendance() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -63,6 +72,7 @@ export default function Attendance() {
   // Viewer state
   const [viewingSheet, setViewingSheet] = useState<any>(null);
   const [viewingRecords, setViewingRecords] = useState<any[]>([]);
+  const [viewingJoins, setViewingJoins] = useState<Map<string, string[]>>(new Map());
   const [loadingRecords, setLoadingRecords] = useState(false);
 
   // Editor state
@@ -459,6 +469,31 @@ export default function Attendance() {
           setViewingRecords([]);
         }
       }
+
+      // Join log (online lessons only): every press, in time order, so the
+      // teacher can see all of a student's arrival times.
+      if (sheet.session_type === 'online') {
+        try {
+          const { data: joinRows } = await supabase
+            .from('attendance_joins')
+            .select('student_id, joined_at')
+            .eq('sheet_id', sheet.id)
+            .order('joined_at', { ascending: true });
+
+          const map = new Map<string, string[]>();
+          (joinRows || []).forEach((j: any) => {
+            const list = map.get(j.student_id) || [];
+            list.push(formatJoinTime(j.joined_at));
+            map.set(j.student_id, list);
+          });
+          setViewingJoins(map);
+        } catch (joinErr) {
+          console.warn('Could not load join log:', joinErr);
+          setViewingJoins(new Map());
+        }
+      } else {
+        setViewingJoins(new Map());
+      }
     } catch (err) {
       console.error('Failed to load sheet records:', err);
       setViewingRecords([]);
@@ -493,6 +528,64 @@ export default function Attendance() {
       }
     } catch (error) {
       handleError(error, 'Failed to export');
+    }
+  };
+
+  /** Downloads a real PDF table (selectable text, not a screenshot of the page). */
+  const exportSheetPDF = async (sheet: any, records: any[]) => {
+    if (typeof window === 'undefined') {
+      showSuccess('PDF export is available on the web version.');
+      return;
+    }
+    try {
+      const { jsPDF } = await import('jspdf');
+      const { default: autoTable } = await import('jspdf-autotable');
+
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+
+      const range = sheet.session_type === 'online' ? formatTimeRange(sheet.start_time, sheet.end_time) : '';
+      const subtitle = `Attendance · ${new Date(sheet.date).toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      })}${range ? ` · Online${range}` : ''}`;
+
+      doc.setFontSize(16);
+      doc.setTextColor(17, 24, 39);
+      doc.text(sheet.school?.name || 'School', 40, 42);
+      doc.setFontSize(10);
+      doc.setTextColor(107, 114, 128);
+      doc.text(subtitle, 40, 60);
+
+      const joinTimes = (studentId: string) => viewingJoins.get(studentId)?.join(', ') || '';
+
+      const body = records.map((r, i) => [
+        String(i + 1),
+        r.student?.name || 'Student',
+        r.student?.email || '',
+        getStatusMeta(r.status).label,
+        joinTimes(r.student_id),
+        r.note || '',
+      ]);
+
+      autoTable(doc, {
+        startY: 76,
+        head: [['#', 'Student', 'Email', 'Status', 'Time Joined', 'Note']],
+        body,
+        styles: { fontSize: 9, cellPadding: 5, lineColor: [229, 231, 235], lineWidth: 0.5 },
+        headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+          0: { cellWidth: 24 },
+          3: { cellWidth: 62 },
+          4: { cellWidth: 96 },
+        },
+      });
+
+      const safeSchool = String(sheet.school?.name || 'school').replace(/[^a-z0-9]+/gi, '-');
+      doc.save(`attendance-${sheet.date}-${safeSchool}.pdf`);
+      showSuccess('Attendance PDF downloaded');
+    } catch (error) {
+      console.error('PDF export error:', error);
+      handleError(error, 'Failed to export PDF');
     }
   };
 
@@ -848,6 +941,7 @@ export default function Attendance() {
               <TouchableOpacity
                 onPress={() => exportSheetCSV(viewingSheet, viewingRecords)}
                 style={styles.headerExportBtn}
+                accessibilityLabel="Export CSV"
               >
                 <Ionicons name="download-outline" size={22} color={Colors.primary} />
               </TouchableOpacity>
@@ -886,6 +980,7 @@ export default function Attendance() {
                 ) : (
                   viewingRecords.map((record) => {
                     const meta = getStatusMeta(record.status);
+                    const joinTimes = viewingJoins.get(record.student_id) || [];
                     return (
                       <View key={record.id || record.student_id} style={styles.recordRow}>
                         <View style={styles.recordLeft}>
@@ -897,6 +992,11 @@ export default function Attendance() {
                           <View style={styles.recordDetails}>
                             <Text style={styles.recordName}>{record.student?.name || 'Student'}</Text>
                             <Text style={styles.recordEmail}>{record.student?.email || ''}</Text>
+                            {joinTimes.length > 0 ? (
+                              <Text style={styles.recordJoinTime}>
+                                Joined: {joinTimes.join(', ')}{joinTimes.length > 1 ? ` (${joinTimes.length}×)` : ''}
+                              </Text>
+                            ) : null}
                             {record.note ? (
                               <Text style={styles.recordNote}>Note: {record.note}</Text>
                             ) : null}
@@ -930,10 +1030,10 @@ export default function Attendance() {
 
               <TouchableOpacity
                 style={styles.modalExportBtn}
-                onPress={() => exportSheetCSV(viewingSheet, viewingRecords)}
+                onPress={() => exportSheetPDF(viewingSheet, viewingRecords)}
               >
                 <Ionicons name="document-text-outline" size={20} color={Colors.primary} />
-                <Text style={styles.modalExportBtnText}>Export CSV</Text>
+                <Text style={styles.modalExportBtnText}>Export PDF</Text>
               </TouchableOpacity>
             </View>
           </SafeAreaView>
@@ -1082,6 +1182,7 @@ const styles = StyleSheet.create({
   recordDetails: { flex: 1 },
   recordName: { fontSize: 15, fontWeight: '600', color: Colors.text.primary },
   recordEmail: { fontSize: 12, color: Colors.text.secondary },
+  recordJoinTime: { fontSize: 12, color: Colors.primary, fontWeight: '600', marginTop: 2 },
   recordNote: { fontSize: 12, color: Colors.text.tertiary, marginTop: 2, fontStyle: 'italic' },
   statusBadge: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 10,

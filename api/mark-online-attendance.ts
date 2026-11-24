@@ -37,6 +37,10 @@ const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 
 const TIME_ZONE = 'Africa/Cairo';
 
+// A student who first presses Join more than this many minutes after the lesson
+// start is recorded as LATE instead of PRESENT.
+const LATE_AFTER_MINUTES = 40;
+
 /** Today's date (YYYY-MM-DD) in the app's timezone, so late-night joins land on the right day. */
 function todayKey(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIME_ZONE });
@@ -60,6 +64,12 @@ function normalizeTime(value: string | null | undefined): string | null {
   if (parts.length < 2) return null;
   const [h, m, s] = parts;
   return `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${(s || '00').padStart(2, '0')}`;
+}
+
+/** HH:MM:SS -> seconds since midnight, for window and late-threshold comparisons. */
+function timeToSeconds(value: string): number {
+  const [h, m, s] = value.split(':').map(Number);
+  return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
 }
 
 function json(res: VercelApiResponse, code: number, body: any) {
@@ -178,6 +188,34 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
       return;
     }
 
+    // A press more than LATE_AFTER_MINUTES after the start counts as late.
+    const isLate =
+      !!start && timeToSeconds(now) > timeToSeconds(start) + LATE_AFTER_MINUTES * 60;
+
+    // Append-only join log: every press is kept, so the teacher can see all of a
+    // student's arrival times, not just the latest one.
+    const { error: joinError } = await admin
+      .from('attendance_joins')
+      .insert({ sheet_id: sheet.id, student_id: studentId, is_late: isLate });
+
+    if (joinError) {
+      // Never block attendance if the join-log table has not been created yet.
+      console.warn('Could not record join log entry:', joinError.message);
+    }
+
+    // Present if the student ever arrived on time; late only if every press was late.
+    const { data: onTimeJoin } = await admin
+      .from('attendance_joins')
+      .select('id')
+      .eq('sheet_id', sheet.id)
+      .eq('student_id', studentId)
+      .eq('is_late', false)
+      .limit(1)
+      .maybeSingle();
+
+    const onTime = Boolean(onTimeJoin) || !isLate;
+    const status = onTime ? 'present' : 'late';
+
     const { data: current } = await admin
       .from('attendance_records')
       .select('status')
@@ -185,12 +223,12 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
       .eq('student_id', studentId)
       .maybeSingle();
 
-    const alreadyMarked = current?.status === 'present';
+    const alreadyMarked = current?.status === 'present' || current?.status === 'late';
 
     const { error: markError } = await admin
       .from('attendance_records')
       .upsert(
-        { sheet_id: sheet.id, student_id: studentId, status: 'present' },
+        { sheet_id: sheet.id, student_id: studentId, status },
         { onConflict: 'sheet_id,student_id' }
       );
 
@@ -199,7 +237,7 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
       return;
     }
 
-    json(res, 200, { ok: true, recorded: true, date, alreadyMarked });
+    json(res, 200, { ok: true, recorded: true, date, alreadyMarked, status, isLate });
   } catch (error: any) {
     console.error('Online attendance error:', error);
     json(res, 500, { error: 'Failed', message: error?.message || 'Unexpected server error.' });

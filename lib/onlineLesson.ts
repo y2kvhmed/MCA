@@ -34,6 +34,7 @@ export async function markOnlineAttendance(): Promise<{
   recorded: boolean;
   alreadyMarked: boolean;
   message: string;
+  status: 'present' | 'late' | '';
 }> {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
@@ -59,5 +60,6 @@ export async function markOnlineAttendance(): Promise<{
     recorded: !!body?.recorded,
     alreadyMarked: !!body?.alreadyMarked,
     message: body?.message || '',
+    status: body?.status === 'late' ? 'late' : body?.status === 'present' ? 'present' : '',
   };
 }

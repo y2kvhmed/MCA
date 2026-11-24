@@ -91,6 +91,8 @@ export default function StudentDashboard() {
       const result = await markOnlineAttendance();
       if (!result.recorded) {
         showSuccess(result.message || 'No online lesson is open right now.');
+      } else if (result.status === 'late') {
+        showSuccess('You joined more than 40 minutes after the start, so you are marked late.');
       } else if (result.alreadyMarked) {
         showSuccess('You are already marked present today');
       } else {
