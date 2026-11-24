@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Image, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { supabase } from '../lib/supabase';
@@ -23,9 +23,12 @@ export default function AssignmentDetails() {
   const [loading, setLoading] = useState(true);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [assignmentId]);
+  // Reload on focus so an edit made on the edit screen shows up immediately.
+  useFocusEffect(
+    useCallback(() => {
+      void loadData();
+    }, [assignmentId])
+  );
 
   const loadData = async () => {
     try {

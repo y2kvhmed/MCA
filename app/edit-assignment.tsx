@@ -79,12 +79,20 @@ export default function EditAssignment() {
         max_score: parseInt(maxScore) || 100,
       };
 
-      const { error } = await supabase
+      // Request the updated row back: RLS silently filters out rows the user may
+      // not update, so an empty result means nothing was actually saved.
+      const { data: updated, error } = await supabase
         .from('assignments')
         .update(assignmentData)
-        .eq('id', assignmentId);
+        .eq('id', assignmentId)
+        .select('id');
 
       if (error) throw error;
+      if (!updated || updated.length === 0) {
+        throw new Error(
+          'This assignment was not updated. Only a teacher assigned to its school or an admin can change it.'
+        );
+      }
 
       showSuccess('Assignment updated successfully');
       router.back();

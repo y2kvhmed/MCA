@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../lib/auth';
 import { getAssignmentsByTeacherSchools, deleteAssignment } from '../lib/database';
@@ -20,10 +20,6 @@ export default function TeacherAssignments() {
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   const loadData = async () => {
     try {
@@ -60,6 +56,14 @@ export default function TeacherAssignments() {
     setRefreshing(true);
     loadData();
   };
+
+  // Reload whenever the screen regains focus so an edit made on another screen
+  // (e.g. an extended deadline) is reflected here straight away.
+  useFocusEffect(
+    useCallback(() => {
+      void loadData();
+    }, [])
+  );
 
   const handleDeleteAssignment = (assignment: any) => {
     const executeDelete = async () => {
